@@ -1,5 +1,7 @@
-import React, { useState, useCallback, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X } from "lucide-react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
+import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home } from "lucide-react";
+
+const TCGPLAYER_MASS_ENTRY_URL = "https://www.tcgplayer.com/massentry";
 
 const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Watery Grave
@@ -72,6 +74,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [zoomed, setZoomed] = useState(null);
+  const compileRunId = useRef(0);
 
   useEffect(() => {
     if (!zoomed) return;
@@ -91,6 +94,7 @@ export default function App() {
     setError(null);
     setEntries(parsed);
     setStage("loading");
+    const runId = ++compileRunId.current;
     const opts = {};
     for (let i = 0; i < parsed.length; i++) {
       const { name } = parsed[i];
@@ -100,6 +104,7 @@ export default function App() {
       } catch (e) {
         opts[name] = [];
       }
+      if (compileRunId.current !== runId) return; // user navigated away (e.g. Start Over) mid-load
     }
     setProgress({ done: parsed.length, total: parsed.length, current: "" });
     setPrintOptions(opts);
@@ -172,6 +177,7 @@ export default function App() {
   };
 
   const reset = () => {
+    compileRunId.current++; // invalidate any in-flight handleCompile loop
     setStage("input");
     setRawText("");
     setEntries([]);
@@ -191,6 +197,8 @@ export default function App() {
       .inter { font-family: 'Inter', sans-serif; }
       .mono { font-family: 'IBM Plex Mono', monospace; }
       ::selection { background: #b23a48; color: #ece4d3; }
+      .art-zoom-btn { opacity: 0.7; transition: opacity 0.15s, transform 0.15s; }
+      .art-card:hover .art-zoom-btn { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
     `}</style>
   );
 
@@ -200,6 +208,32 @@ export default function App() {
   const TEAL = "#3c8c96";
   const TEXT = "#ece4d3";
   const SUBTEXT = "#9aa3ad";
+
+  const homeButton = (
+    <button
+      onClick={reset}
+      title="Start over"
+      className="inter"
+      style={{
+        position: "fixed",
+        top: 16,
+        left: 16,
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        background: PANEL_BG,
+        color: SUBTEXT,
+        border: "1px solid #2a323d",
+        borderRadius: 6,
+        padding: "7px 11px",
+        fontSize: 12.5,
+        cursor: "pointer",
+        zIndex: 50,
+      }}
+    >
+      <Home size={13} /> Start over
+    </button>
+  );
 
   // ---------- INPUT STAGE ----------
   if (stage === "input") {
@@ -294,6 +328,7 @@ export default function App() {
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
         {fontImport}
+        {homeButton}
         <div style={{ maxWidth: 420, width: "100%", textAlign: "center" }}>
           <Loader2 className="mono" size={26} style={{ color: TEAL, animation: "spin 1s linear infinite" }} />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -319,6 +354,7 @@ export default function App() {
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
         {fontImport}
+        {homeButton}
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
           {/* progress rule */}
           <div style={{ display: "flex", gap: 3, marginBottom: 22 }}>
@@ -367,6 +403,7 @@ export default function App() {
                   return (
                     <div
                       key={o.id}
+                      className="art-card"
                       onClick={() => toggleSelect(name, o.id)}
                       style={{
                         cursor: "pointer",
@@ -380,6 +417,7 @@ export default function App() {
                     >
                       <img src={o.image} alt={`${name} — ${o.setName}`} style={{ width: "100%", display: "block" }} loading="lazy" />
                       <button
+                        className="art-zoom-btn"
                         onClick={(e) => {
                           e.stopPropagation();
                           setZoomed(o);
@@ -387,21 +425,22 @@ export default function App() {
                         title="Zoom in"
                         style={{
                           position: "absolute",
-                          top: 6,
-                          left: 6,
-                          width: 24,
-                          height: 24,
+                          top: "50%",
+                          left: "50%",
+                          transform: "translate(-50%, -50%)",
+                          width: 44,
+                          height: 44,
                           borderRadius: "50%",
-                          background: "rgba(15,18,22,0.75)",
-                          border: "none",
+                          background: "rgba(15,18,22,0.7)",
+                          border: "1px solid rgba(236,228,211,0.25)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
                           cursor: "pointer",
-                          boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                          boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
                         }}
                       >
-                        <ZoomIn size={13} color={TEXT} />
+                        <ZoomIn size={19} color={TEXT} />
                       </button>
                       {isSel && (
                         <div
@@ -630,6 +669,7 @@ export default function App() {
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "48px 20px" }}>
         {fontImport}
+        {homeButton}
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
             SELECTION COMPLETE
@@ -684,6 +724,28 @@ export default function App() {
             >
               <Copy size={15} /> {copied ? "Copied!" : "Copy list"}
             </button>
+            <a
+              href={TCGPLAYER_MASS_ENTRY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inter"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                background: "transparent",
+                color: TEAL,
+                border: `1px solid ${TEAL}`,
+                borderRadius: 6,
+                padding: "11px 20px",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+                textDecoration: "none",
+              }}
+            >
+              Open TCGplayer Mass Entry <ExternalLink size={15} />
+            </a>
             <button
               onClick={reset}
               className="inter"
@@ -706,7 +768,7 @@ export default function App() {
 
           <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 24 }}>
             Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
-            <a href="https://www.tcgplayer.com/massentry" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
+            <a href={TCGPLAYER_MASS_ENTRY_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
               TCGplayer's Mass Entry
             </a>{" "}
             syntax — paste this list directly in to add the exact printings you picked, not just any copy of each card.
