@@ -80,7 +80,36 @@ No separate dashboard step needed here — the binding lives in the committed
 `wrangler.toml` from step 3, so it's already wired up once that first
 successful build completes.
 
-## 5. Attach project-mana.com
+## 5. Feedback button (GitHub issue creation)
+
+The in-app "Feedback" button posts to `/api/feedback` (handled in
+`worker-entry.js`), which files a GitHub issue on your behalf so visitors
+never leave the app or see any code/GitHub UI. It needs a token with the
+narrowest possible scope, since it's held by a public-facing Worker:
+
+1. On GitHub: **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+2. **Repository access**: "Only select repositories" → `project_mana`. Do
+   **not** grant "All repositories".
+3. **Permissions**: **Issues → Read and write**. Leave everything else
+   (Contents, Actions, etc.) at "No access" — this token should not be able
+   to push code or change settings, only file issues.
+4. Set an expiration and copy the generated token, then wire it into the
+   frontend Worker (same project as step 3, **not** `worker/`):
+   ```bash
+   cd mtg-art-picker
+   npx wrangler secret put GITHUB_FEEDBACK_TOKEN
+   ```
+5. If the frontend Worker is git-connected (per step 3), also add
+   `GITHUB_FEEDBACK_TOKEN` under the Cloudflare dashboard's **Settings →
+   Variables and Secrets** for that project (as a secret, not plaintext) so
+   it survives future git-triggered redeploys.
+
+Submissions are rate-limited (5 per IP per hour, tracked in `MANIFEST_KV`)
+and a hidden honeypot field silently drops bot submissions, so a public
+endpoint doesn't turn into an open spam vector for your issue tracker.
+
+## 6. Attach project-mana.com
 
 **Worker project → Settings → Domains & Routes** (or **Custom domains**,
 wording may vary) → add `project-mana.com` (root/apex, pointing directly at
@@ -90,7 +119,7 @@ registrar first. DNS propagation and SSL cert issuance are usually done
 within minutes, occasionally longer depending on registrar/nameserver
 timing.
 
-## 6. Smoke test
+## 7. Smoke test
 
 Visit `https://project-mana.com`, paste a decklist (the "Use sample list"
 button works), and confirm:
@@ -98,6 +127,8 @@ button works), and confirm:
 - Prices show for normal/foil/etched as applicable
 - The Scryfall credit footer and per-print Scryfall links work
 - Export/copy at the end produces the expected list
+- The "Feedback" button submits and a matching issue with the
+  `beta-feedback` label shows up on the repo
 
 If printings come back empty for known cards, check that step 2's manual
 cron trigger actually completed successfully (Worker Logs) and that the KV

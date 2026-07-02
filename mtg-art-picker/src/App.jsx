@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home } from "lucide-react";
+import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
+import FeedbackWidget from "./FeedbackWidget";
 
 const TCGPLAYER_MASS_ENTRY_URL = "https://www.tcgplayer.com/massentry";
 
@@ -213,12 +215,28 @@ export default function App() {
     `}</style>
   );
 
-  const ROOT_BG = "#14181d";
-  const PANEL_BG = "#1b2129";
-  const ACCENT = "#b23a48";
-  const TEAL = "#3c8c96";
-  const TEXT = "#ece4d3";
-  const SUBTEXT = "#9aa3ad";
+  const feedbackWidget = <FeedbackWidget stage={stage} />;
+
+  const betaPill = (
+    <span
+      className="mono"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        marginLeft: 8,
+        fontSize: 9.5,
+        letterSpacing: "0.08em",
+        padding: "2px 6px",
+        borderRadius: 3,
+        background: "rgba(178,58,72,0.15)",
+        color: ACCENT,
+        border: "1px solid rgba(178,58,72,0.4)",
+        verticalAlign: "middle",
+      }}
+    >
+      BETA
+    </span>
+  );
 
   const homeButton = (
     <button
@@ -251,9 +269,10 @@ export default function App() {
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "48px 20px" }}>
         {fontImport}
+        {feedbackWidget}
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
-            ART SELECTION · GRIXIS DECK
+            ART SELECTION · GRIXIS DECK{betaPill}
           </div>
           <h1 className="fraunces" style={{ fontSize: 34, fontWeight: 700, margin: "0 0 8px", lineHeight: 1.15 }}>
             Choose your printings
@@ -262,6 +281,10 @@ export default function App() {
             Paste your list below — one card per line, formatted as <span className="mono">qty card name</span>. You'll
             page through every card one at a time and pick the art you want. Skip any card to default to the cheapest
             printing.
+          </p>
+          <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 28px" }}>
+            <strong style={{ color: TEXT }}>This is a beta.</strong> Printing data and export formatting may
+            occasionally be off — if something looks wrong, use the "Feedback" button in the corner to let me know.
           </p>
           <textarea
             value={rawText}
@@ -340,9 +363,9 @@ export default function App() {
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
         {fontImport}
         {homeButton}
+        {feedbackWidget}
         <div style={{ maxWidth: 420, width: "100%", textAlign: "center" }}>
           <Loader2 className="mono" size={26} style={{ color: TEAL, animation: "spin 1s linear infinite" }} />
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           <div className="fraunces" style={{ fontSize: 20, margin: "16px 0 6px" }}>Fetching printings…</div>
           <div className="mono" style={{ color: SUBTEXT, fontSize: 12.5, marginBottom: 18 }}>
             {progress.done} / {progress.total} — {progress.current}
@@ -368,6 +391,7 @@ export default function App() {
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
         {fontImport}
         {homeButton}
+        {feedbackWidget}
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
           {/* progress rule */}
           <div style={{ display: "flex", gap: 3, marginBottom: 22 }}>
@@ -733,12 +757,13 @@ export default function App() {
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "48px 20px" }}>
         {fontImport}
         {homeButton}
+        {feedbackWidget}
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
-            SELECTION COMPLETE
+            SELECTION COMPLETE{betaPill}
           </div>
           <h1 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px" }}>Your finished list</h1>
-          <p style={{ color: SUBTEXT, fontSize: 14.5, margin: "0 0 22px" }}>
+          <p style={{ color: SUBTEXT, fontSize: 14.5, margin: "0 0 10px" }}>
             {lines.length} line{lines.length === 1 ? "" : "s"} · est. total{" "}
             <span className="mono" style={{ color: TEXT }}>
               ${total.toFixed(2)}
@@ -746,6 +771,10 @@ export default function App() {
             {unresolved > 0 && (
               <span style={{ color: ACCENT }}> · {unresolved} card{unresolved === 1 ? "" : "s"} not found</span>
             )}
+          </p>
+          <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 22px" }}>
+            <strong style={{ color: TEXT }}>Beta note:</strong> double-check quantities and printings against
+            TCGplayer before buying. Something look wrong? Use the "Feedback" button in the corner.
           </p>
 
           <textarea
