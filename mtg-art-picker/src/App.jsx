@@ -272,7 +272,7 @@ export default function App() {
         {feedbackWidget}
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
-            ART SELECTION · GRIXIS DECK{betaPill}
+            PROJECT MANA · EVERY PRINTING, YOUR PICK{betaPill}
           </div>
           <h1 className="fraunces" style={{ fontSize: 34, fontWeight: 700, margin: "0 0 8px", lineHeight: 1.15 }}>
             Choose your printings
