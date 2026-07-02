@@ -48,6 +48,85 @@ export function leanPrinting(card) {
   };
 }
 
+// default_cards is a huge JSON array (hundreds of MB) — buffering it whole
+// via .json() blows past a Worker's memory limit. This scans the response
+// body one chunk at a time and parses each top-level `{...}` object as soon
+// as it closes, so we only ever hold one raw card object plus the (much
+// smaller) lean shard maps in memory, never the full file or full array.
+// String-awareness matters here: card text fields routinely contain literal
+// `{`/`}` (mana symbols like "{T}: Add {C}."), so brace-depth is only
+// tracked outside of string literals.
+async function streamCards(response, onCard) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let pos = 0; // cursor of the next unprocessed character within buffer
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let objectStart = -1;
+  let seenOpenBracket = false;
+
+  const processBuffer = () => {
+    while (pos < buffer.length) {
+      const ch = buffer[pos];
+
+      if (!seenOpenBracket) {
+        if (ch === "[") seenOpenBracket = true;
+        pos++;
+        continue;
+      }
+
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        pos++;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        pos++;
+        continue;
+      }
+
+      if (ch === "{") {
+        if (depth === 0) objectStart = pos;
+        depth++;
+        pos++;
+        continue;
+      }
+
+      if (ch === "}") {
+        depth--;
+        pos++;
+        if (depth === 0 && objectStart !== -1) {
+          onCard(JSON.parse(buffer.slice(objectStart, pos)));
+          objectStart = -1;
+        }
+        continue;
+      }
+
+      pos++;
+    }
+
+    // Bound memory by dropping the prefix we'll never need again: if we're
+    // mid-object, that's everything before objectStart; otherwise it's
+    // everything up to the cursor. Shift objectStart/pos to match.
+    const keepFrom = objectStart !== -1 ? objectStart : pos;
+    buffer = buffer.slice(keepFrom);
+    pos -= keepFrom;
+    if (objectStart !== -1) objectStart -= keepFrom;
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += value;
+    processBuffer();
+  }
+}
+
 export async function buildManifest(env) {
   const bulkRes = await fetch(SCRYFALL_BULK_DATA_URL, {
     headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
@@ -62,26 +141,19 @@ export async function buildManifest(env) {
   });
   if (!dataRes.ok) throw new Error(`bulk data download failed: ${dataRes.status}`);
 
-  // NOTE: default_cards is a large file (hundreds of MB). Buffering it whole
-  // via .json() is the simplest correct option and fits comfortably within
-  // Workers' limits at today's file size. If Scryfall's dataset grows enough
-  // to trip memory or CPU limits on your plan, replace this with an
-  // incremental/streaming JSON parser instead of loading it all at once.
-  const cards = await dataRes.json();
-
   const shards = Array.from({ length: SHARD_COUNT }, () => ({}));
   let cardCount = 0;
 
-  for (const card of cards) {
-    if (!card.games?.includes("paper")) continue;
+  await streamCards(dataRes, (card) => {
+    if (!card.games?.includes("paper")) return;
     const printing = leanPrinting(card);
-    if (!printing) continue;
+    if (!printing) return;
 
     const key = normalizeName(card.name);
     const bucket = shards[shardFor(key)];
     (bucket[key] ??= []).push(printing);
     cardCount++;
-  }
+  });
 
   for (const bucket of shards) {
     for (const key of Object.keys(bucket)) {
