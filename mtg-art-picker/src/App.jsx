@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink } from "lucide-react";
 
 const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Watery Grave
@@ -54,6 +54,7 @@ async function fetchPrints(name) {
         image: img,
         priceUsd,
         tcgplayerId: c.tcgplayer_id || null,
+        scryfallUri: c.scryfall_uri || null,
       };
     })
     .filter((o) => o.image);
@@ -272,6 +273,12 @@ export default function App() {
               Use sample list
             </button>
           </div>
+          <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 36 }}>
+            Card data and images via{" "}
+            <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
+              Scryfall
+            </a>
+          </p>
         </div>
       </div>
     );
@@ -396,11 +403,27 @@ export default function App() {
                           color: SUBTEXT,
                           display: "flex",
                           justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 6,
                         }}
                       >
                         <span>{o.set} #{o.cn}</span>
-                        <span style={{ color: o.priceUsd != null ? TEAL : SUBTEXT }}>
-                          {o.priceUsd != null ? `$${o.priceUsd.toFixed(2)}` : "—"}
+                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ color: o.priceUsd != null ? TEAL : SUBTEXT }}>
+                            {o.priceUsd != null ? `$${o.priceUsd.toFixed(2)}` : "—"}
+                          </span>
+                          {o.scryfallUri && (
+                            <a
+                              href={o.scryfallUri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="View on Scryfall"
+                              style={{ color: SUBTEXT, display: "flex", alignItems: "center" }}
+                            >
+                              <ExternalLink size={11} />
+                            </a>
+                          )}
                         </span>
                       </div>
                     </div>
