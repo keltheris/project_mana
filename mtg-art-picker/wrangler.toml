@@ -2,10 +2,10 @@ name = "projectmana"
 compatibility_date = "2025-01-01"
 main = "worker-entry.js"
 
-[assets]
-directory = "./dist"
-binding = "ASSETS"
-
 kv_namespaces = [
   { binding = "MANIFEST_KV", id = "fc661a151d0c431c9e0e069c0bdccbc5" }
 ]
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
