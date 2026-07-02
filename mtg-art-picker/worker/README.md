@@ -1,9 +1,11 @@
-# Manifest worker
+# Manifest worker (cron only)
 
-Builds a daily lean index of Scryfall printings into Workers KV, and serves
-it at `/api/prints?name=X` so the frontend stops hitting Scryfall's live
-search API on every page load. See the top-level `HANDOFF.md` for why this
-exists.
+Runs once a day, downloads Scryfall's `default_cards` bulk data file, and
+writes a lean index into Workers KV. This Worker has no HTTP-facing role —
+reads happen through `functions/api/prints.js`, a Cloudflare Pages Function
+co-located with the frontend (see `../DEPLOY.md` for the full picture).
+Both sides share their sharding/lookup logic from `../shared/manifest.js` so
+they can never disagree about where a card's data lives in KV.
 
 ## One-time setup (requires your own Cloudflare account)
 
@@ -23,31 +25,23 @@ Paste the printed `id` into `wrangler.toml`'s `kv_namespaces` entry (replacing
 npm run deploy
 ```
 
+**Use this same namespace id** when adding the KV binding to the Pages
+project (see `../DEPLOY.md`) — the Worker writes to it, the Pages Function
+reads from it.
+
 The Cron Trigger in `wrangler.toml` will run the manifest build automatically
 once a day. To populate KV immediately instead of waiting for the first
-scheduled run, trigger it manually:
+scheduled run, trigger it manually from the Cloudflare dashboard's Worker →
+Triggers → Cron Triggers panel ("Trigger event" button), or locally:
 
 ```bash
 npx wrangler dev --test-scheduled
 # in another shell:
-curl "http://localhost:8787/__scheduled"
+curl "http://localhost:8787/cdn-cgi/handler/scheduled"
 ```
 
-or, against the deployed Worker, from the Cloudflare dashboard's Cron
-Triggers panel ("Trigger event" button).
-
-## Wiring the frontend to this Worker
-
-The app calls a relative `/api/prints` path, so in production it needs to be
-reachable on the same origin as the deployed frontend — either:
-
-- deploy this Worker on a route under the same zone/domain as the Cloudflare
-  Pages site (e.g. `yoursite.pages.dev/api/*` → this Worker), or
-- rewrite the calls to an absolute URL if you host the Worker elsewhere.
-
-For local development, run this Worker with `wrangler dev` (default port
-8787) alongside the Vite dev server, and set `VITE_API_BASE` in the frontend's
-`.env` to `http://localhost:8787` (see `mtg-art-picker/.env.example`).
+(Local runs write to local simulated KV only, not your real remote
+namespace — this is just for checking `buildManifest()` doesn't throw.)
 
 ## Notes
 
