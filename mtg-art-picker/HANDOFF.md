@@ -24,6 +24,8 @@ A React tool for picking exact card printings/art for an MTG decklist, using Scr
 ### 3. Deploy — needs your Cloudflare account, steps documented
 Full step-by-step commands are in `DEPLOY.md`, including wiring up the custom domain **project-mana.com** (root domain → this Pages project, per your call). Ping me once you've gone through it if anything needs adjusting.
 
+**TODO — remove after beta:** `worker/src/index.js` currently has a `/trigger` HTTP route (gated on a `TRIGGER_SECRET`) added to bootstrap KV manually since a dashboard "trigger cron now" button wasn't easy to find. This was explicitly agreed to be temporary — once beta testing confirms the daily Cron Trigger is running on its own, remove the `fetch` handler from that file (keep only `scheduled`) and delete the `TRIGGER_SECRET` secret (`wrangler secret delete TRIGGER_SECRET`), so there's no standing HTTP-triggerable endpoint on the account.
+
 ### 4. Price display — done
 Each printing thumbnail shows normal/foil/etched-foil prices independently (whichever apply to that printing), sourced from Scryfall's `prices.usd` / `usd_foil` / `usd_etched`. Note: Scryfall does not provide condition-based pricing (NM/LP/MP/HP/DMG) — their price data is one aggregate market price per finish, not per listing/condition. A condition filter was considered and dropped for that reason; getting real condition pricing would require a separate marketplace API integration (e.g. TCGplayer's own API), which is out of scope for now.
 
