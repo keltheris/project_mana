@@ -52,6 +52,17 @@ function minPrice(o) {
   return vals.length ? Math.min(...vals) : null;
 }
 
+// TCGplayer's Mass Entry [SET] CN matching is unreliable for these
+// categories, confirmed against real TCGplayer product pages: Secret Lair
+// Drop numbers are a display-name disambiguator rather than a matchable
+// card-number field, and special treatment variants (Borderless, Showcase,
+// etc.) are catalogued by descriptive name instead of number. A missing
+// tcgplayerId means Scryfall itself has no known TCGplayer product to
+// match, and promos are rarely sold there at all.
+function isMassEntryRisky(o) {
+  return !!(o.promo || o.treatment || o.set === "SLD" || !o.tcgplayerId);
+}
+
 function cheapestOf(opts) {
   const priced = opts.filter((o) => minPrice(o) != null);
   const pool = priced.length ? priced : opts;
@@ -157,17 +168,17 @@ export default function App() {
       }
       if (sel.length === 0) {
         const p = cheapestOf(opts);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
         total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
         total += (minPrice(p) || 0) * qty;
       } else {
         sel.forEach((id) => {
           const p = opts.find((o) => o.id === id);
           if (p) {
-            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
+            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
             total += minPrice(p) || 0;
           }
         });
@@ -349,7 +360,9 @@ export default function App() {
     const { name, qty } = entries[reviewIndex];
     const opts = printOptions[name] || [];
     const sel = selections[name] || new Set();
-    const shown = opts.slice(0, visibleCount);
+    const sortedOpts = [...opts].sort((a, b) => Number(isMassEntryRisky(a)) - Number(isMassEntryRisky(b)));
+    const shown = sortedOpts.slice(0, visibleCount);
+    const firstRiskyIndex = shown.findIndex((o) => isMassEntryRisky(o));
 
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
@@ -398,11 +411,10 @@ export default function App() {
                   gap: 14,
                 }}
               >
-                {shown.map((o) => {
+                {shown.map((o, i) => {
                   const isSel = sel.has(o.id);
-                  return (
+                  const card = (
                     <div
-                      key={o.id}
                       className="art-card"
                       onClick={() => toggleSelect(name, o.id)}
                       style={{
@@ -532,6 +544,30 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  );
+                  return (
+                    <React.Fragment key={o.id}>
+                      {i === firstRiskyIndex && firstRiskyIndex > 0 && (
+                        <div
+                          className="mono"
+                          style={{
+                            gridColumn: "1 / -1",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            color: "#c9a227",
+                            fontSize: 10.5,
+                            letterSpacing: "0.04em",
+                            margin: "2px 0 -4px",
+                          }}
+                        >
+                          <AlertTriangle size={12} />
+                          LESS LIKELY TO BE AVAILABLE ON TCGPLAYER
+                          <div style={{ flex: 1, height: 1, background: "rgba(201,162,39,0.3)" }} />
+                        </div>
+                      )}
+                      {card}
+                    </React.Fragment>
                   );
                 })}
               </div>
@@ -801,44 +837,49 @@ export default function App() {
             syntax — paste this list directly in to add the exact printings you picked, not just any copy of each card.
           </p>
 
-          {lines.some((l) => l.tcgplayerId) && (
+          {lines.some((l) => l.risky) && (
             <div style={{ marginTop: 28 }}>
-              <div className="mono" style={{ color: SUBTEXT, fontSize: 11.5, letterSpacing: "0.08em", marginBottom: 10 }}>
-                DIRECT LINKS — if Mass Entry misses one, use these instead
+              <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#c9a227", fontSize: 12.5, marginBottom: 10 }}>
+                <AlertTriangle size={14} />
+                These printings run a risk of not pasting correctly into Mass Entry — use these direct links instead
               </div>
-              <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
-                {lines.map((l, i) => (
-                  <div
-                    key={i}
-                    className="mono"
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "9px 12px",
-                      fontSize: 12.5,
-                      borderTop: i === 0 ? "none" : "1px solid #2a323d",
-                      color: SUBTEXT,
-                    }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
-                    </span>
-                    {l.tcgplayerId ? (
-                      <a
-                        href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
-                      >
-                        TCGplayer <ExternalLink size={11} />
-                      </a>
-                    ) : (
-                      <span style={{ flexShrink: 0, fontSize: 11 }}>—</span>
-                    )}
-                  </div>
-                ))}
+              <div style={{ border: "1px solid rgba(201,162,39,0.35)", borderRadius: 6, overflow: "hidden" }}>
+                {lines
+                  .filter((l) => l.risky)
+                  .map((l, i) => (
+                    <div
+                      key={i}
+                      className="mono"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "9px 12px",
+                        fontSize: 12.5,
+                        borderTop: i === 0 ? "none" : "1px solid rgba(201,162,39,0.2)",
+                        color: SUBTEXT,
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
+                      </span>
+                      {l.tcgplayerId ? (
+                        <a
+                          href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                        >
+                          TCGplayer <ExternalLink size={11} />
+                        </a>
+                      ) : (
+                        <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
+                          no link found
+                        </span>
+                      )}
+                    </div>
+                  ))}
               </div>
             </div>
           )}
