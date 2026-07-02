@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink } from "lucide-react";
+import React, { useState, useCallback, useEffect } from "react";
+import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X } from "lucide-react";
 
 const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Watery Grave
@@ -71,6 +71,16 @@ export default function App() {
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [zoomed, setZoomed] = useState(null);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setZoomed(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed]);
 
   const handleCompile = useCallback(async () => {
     const parsed = parseList(rawText);
@@ -170,6 +180,7 @@ export default function App() {
     setReviewIndex(0);
     setError(null);
     setCopied(false);
+    setZoomed(null);
   };
 
   const fontImport = (
@@ -368,6 +379,30 @@ export default function App() {
                       }}
                     >
                       <img src={o.image} alt={`${name} — ${o.setName}`} style={{ width: "100%", display: "block" }} loading="lazy" />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setZoomed(o);
+                        }}
+                        title="Zoom in"
+                        style={{
+                          position: "absolute",
+                          top: 6,
+                          left: 6,
+                          width: 24,
+                          height: 24,
+                          borderRadius: "50%",
+                          background: "rgba(15,18,22,0.75)",
+                          border: "none",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                        }}
+                      >
+                        <ZoomIn size={13} color={TEXT} />
+                      </button>
                       {isSel && (
                         <div
                           style={{
@@ -519,6 +554,60 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {zoomed && (
+          <div
+            onClick={() => setZoomed(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(10,12,15,0.88)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+              zIndex: 100,
+              cursor: "zoom-out",
+            }}
+          >
+            <button
+              onClick={() => setZoomed(null)}
+              title="Close"
+              style={{
+                position: "absolute",
+                top: 20,
+                right: 20,
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: PANEL_BG,
+                border: "1px solid #2a323d",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+              }}
+            >
+              <X size={18} color={TEXT} />
+            </button>
+            <img
+              src={zoomed.image}
+              alt={`${name} — ${zoomed.setName}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxWidth: "min(90vw, 560px)",
+                maxHeight: "80vh",
+                borderRadius: 14,
+                boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+                cursor: "default",
+              }}
+            />
+            <div className="mono" style={{ color: SUBTEXT, fontSize: 13, marginTop: 14, textAlign: "center" }}>
+              {zoomed.setName} · {zoomed.set} #{zoomed.cn}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
