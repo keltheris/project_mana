@@ -157,17 +157,17 @@ export default function App() {
       }
       if (sel.length === 0) {
         const p = cheapestOf(opts);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p) });
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
         total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p) });
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
         total += (minPrice(p) || 0) * qty;
       } else {
         sel.forEach((id) => {
           const p = opts.find((o) => o.id === id);
           if (p) {
-            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p) });
+            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId });
             total += minPrice(p) || 0;
           }
         });
@@ -506,6 +506,12 @@ export default function App() {
                             </a>
                           )}
                         </div>
+                        {o.treatment && (
+                          <div style={{ fontSize: 9.5, color: "#7d8a97", marginTop: 2 }}>
+                            {o.rarity && `${o.rarity} · `}
+                            {o.treatment}
+                          </div>
+                        )}
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3 }}>
                           {o.prices?.usd == null && o.prices?.usdFoil == null && o.prices?.usdEtched == null && (
                             <span>—</span>
@@ -794,6 +800,48 @@ export default function App() {
             </a>{" "}
             syntax — paste this list directly in to add the exact printings you picked, not just any copy of each card.
           </p>
+
+          {lines.some((l) => l.tcgplayerId) && (
+            <div style={{ marginTop: 28 }}>
+              <div className="mono" style={{ color: SUBTEXT, fontSize: 11.5, letterSpacing: "0.08em", marginBottom: 10 }}>
+                DIRECT LINKS — if Mass Entry misses one, use these instead
+              </div>
+              <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
+                {lines.map((l, i) => (
+                  <div
+                    key={i}
+                    className="mono"
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "9px 12px",
+                      fontSize: 12.5,
+                      borderTop: i === 0 ? "none" : "1px solid #2a323d",
+                      color: SUBTEXT,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
+                    </span>
+                    {l.tcgplayerId ? (
+                      <a
+                        href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                      >
+                        TCGplayer <ExternalLink size={11} />
+                      </a>
+                    ) : (
+                      <span style={{ flexShrink: 0, fontSize: 11 }}>—</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

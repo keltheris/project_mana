@@ -28,6 +28,30 @@ function parsePrice(v) {
   return v ? parseFloat(v) : null;
 }
 
+const RARITY_LABELS = {
+  common: "Common",
+  uncommon: "Uncommon",
+  rare: "Rare",
+  mythic: "Mythic",
+  special: "Special",
+  bonus: "Bonus",
+};
+
+// Sets like Double Masters deliberately print the same card twice (once per
+// rarity/frame slot), which looks like a confusing duplicate in a plain art
+// grid unless something distinguishes them. This picks the most notable
+// frame/border treatment as a short human label, when there is one.
+function treatmentLabel(card) {
+  const effects = card.frame_effects || [];
+  if (card.border_color === "borderless") return "Borderless";
+  if (effects.includes("showcase")) return "Showcase";
+  if (effects.includes("extendedart")) return "Extended Art";
+  if (effects.includes("etched")) return "Etched";
+  if (card.frame === "1997" || card.frame === "1993") return "Retro Frame";
+  if (card.full_art) return "Full Art";
+  return null;
+}
+
 export function leanPrinting(card) {
   const img = card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal || null;
   if (!img) return null;
@@ -45,6 +69,8 @@ export function leanPrinting(card) {
     tcgplayerId: card.tcgplayer_id || null,
     scryfallUri: card.scryfall_uri || null,
     promo: !!card.promo,
+    rarity: card.rarity ? RARITY_LABELS[card.rarity] || card.rarity : null,
+    treatment: treatmentLabel(card),
     releasedAt: card.released_at || "",
   };
 }
