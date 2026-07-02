@@ -1,13 +1,15 @@
-# Deploying the beta
+# Deploying
 
-Everything below requires your own Cloudflare account and (for the last
-step) registrar access to `project-mana.com` — none of this can be run for
-you, since it needs your credentials.
+The app is live at **project-mana.com**. This doc is the reference for
+setting it up from scratch (e.g. a fresh Cloudflare account, or recovering
+from a deleted project) — everything below requires Cloudflare account
+credentials and (for the domain step) registrar access, so none of it can be
+run by an AI session; it needs to be done by hand.
 
 ## 1. Create the shared KV namespace
 
-The daily cron job (Worker) writes to this; the read API (Pages Function)
-reads from it. Same namespace, both places.
+The daily cron job (`worker/`) writes to this; the frontend Worker
+(`worker-entry.js`) reads from it. Same namespace, both places.
 
 ```bash
 cd mtg-art-picker/worker
@@ -28,12 +30,13 @@ npm run deploy
 ```
 
 This deploys the Cron Trigger only (see `worker/README.md`). Once deployed,
-trigger it manually from the Cloudflare dashboard (Workers & Pages →
-`mtg-art-picker-manifest` → Triggers → Cron Triggers → "Trigger event") so
-KV is populated right away instead of waiting for the next scheduled run.
-This run downloads and processes Scryfall's full card database, so give it
-a few minutes and check the Logs tab if `/api/prints` comes back empty
-afterward.
+populate KV right away instead of waiting for the next scheduled run using
+the `/trigger` route — see `worker/README.md` for the exact commands (set a
+`TRIGGER_SECRET`, then `curl` it). The dashboard's own "trigger cron now"
+button has moved around across Cloudflare UI versions and hasn't been a
+reliable way to do this. This run downloads and processes Scryfall's full
+card database, so give it a few minutes and check the Worker's Logs tab if
+`/api/prints` comes back empty afterward.
 
 ## 3. Create the frontend Worker
 
@@ -99,3 +102,16 @@ button works), and confirm:
 If printings come back empty for known cards, check that step 2's manual
 cron trigger actually completed successfully (Worker Logs) and that the KV
 binding name in step 4 is exactly `MANIFEST_KV`.
+
+## Making changes later
+
+- **Frontend / `worker-entry.js` / `shared/manifest.js`**: git-connected —
+  pushing to this repo's branch auto-deploys. No manual step needed.
+- **`worker/` (the cron manifest builder)**: deliberately *not*
+  git-connected (see `worker/README.md`) — a push here does **not**
+  redeploy it. If you change `worker/src/index.js` or
+  `shared/manifest.js` and need the cron job to pick it up, you must
+  manually `cd worker && npm run deploy` before re-triggering, or the
+  rebuild will run stale code. This has bitten us before — the data
+  changed but the manifest still had the old shape until the worker was
+  redeployed by hand.

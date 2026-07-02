@@ -1,14 +1,14 @@
 # MTG Art Picker
 
-A tool for picking exact card printings/art for your Magic: The Gathering decklist, using card data from Scryfall.
+A tool for picking exact card printings/art for your Magic: The Gathering decklist, using card data from Scryfall. Live at **[project-mana.com](https://project-mana.com)**.
 
 ## Architecture
 
 - **Frontend**: this Vite/React app (`src/`), built to `dist/`.
 - **`worker-entry.js`**: the Cloudflare Worker (deployed as the "projectmana" Worker) that serves the built frontend as static assets and handles `/api/prints?name=X` directly, reading from a daily-refreshed KV index instead of calling Scryfall live on every visitor's page load. Config is in the root `wrangler.toml` (uses Cloudflare's "Workers with static assets" model, not a separate classic Pages project).
-- **`worker/`**: a *separate* Cloudflare Worker with a Cron Trigger that rebuilds that KV index once a day from Scryfall's bulk data, deployed independently.
+- **`worker/`**: a *separate* Cloudflare Worker with a Cron Trigger that rebuilds that KV index once a day from Scryfall's bulk data, deployed independently — see `worker/README.md`.
 
-See `HANDOFF.md` for the full history/rationale and `DEPLOY.md` for step-by-step deploy instructions.
+See `DEPLOY.md` for setup-from-scratch instructions and notes on redeploying each piece.
 
 ## Local development
 

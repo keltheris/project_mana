@@ -35,7 +35,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 
 // Reads from the daily manifest built by worker/src/index.js instead of
 // hitting Scryfall's live search API on every visitor's page load. See
-// HANDOFF.md and worker/README.md for the full architecture.
+// README.md and worker/README.md for the full architecture.
 async function fetchPrints(name) {
   const url = `${API_BASE}/api/prints?name=${encodeURIComponent(name)}`;
   const res = await fetch(url);
