@@ -44,6 +44,7 @@ export function leanPrinting(card) {
     },
     tcgplayerId: card.tcgplayer_id || null,
     scryfallUri: card.scryfall_uri || null,
+    promo: !!card.promo,
     releasedAt: card.released_at || "",
   };
 }

@@ -471,7 +471,28 @@ export default function App() {
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-                          <span>{o.set} #{o.cn}</span>
+                          <span style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                            <span>{o.set} #{o.cn}</span>
+                            {o.promo && (
+                              <span
+                                title="Promo-only print — likely not sold on TCGplayer"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 2,
+                                  fontSize: 8.5,
+                                  padding: "1px 4px",
+                                  borderRadius: 3,
+                                  background: "rgba(201,162,39,0.18)",
+                                  color: "#c9a227",
+                                  border: "1px solid rgba(201,162,39,0.4)",
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <AlertTriangle size={8} /> PROMO
+                              </span>
+                            )}
+                          </span>
                           {o.scryfallUri && (
                             <a
                               href={o.scryfallUri}
