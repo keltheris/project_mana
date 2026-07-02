@@ -1,4 +1,4 @@
-name = "mtg-art-picker"
+name = "projectmana"
 compatibility_date = "2025-01-01"
 pages_build_output_dir = "dist"
 
