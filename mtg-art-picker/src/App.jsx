@@ -45,10 +45,19 @@ async function fetchPrints(name) {
   return Array.isArray(json) ? json.filter((o) => o.image) : [];
 }
 
+function minPrice(o) {
+  const vals = [o.prices?.usd, o.prices?.usdFoil, o.prices?.usdEtched].filter((v) => v != null);
+  return vals.length ? Math.min(...vals) : null;
+}
+
 function cheapestOf(opts) {
-  const priced = opts.filter((o) => o.priceUsd != null);
+  const priced = opts.filter((o) => minPrice(o) != null);
   const pool = priced.length ? priced : opts;
-  return pool.reduce((best, o) => (o.priceUsd != null && (best.priceUsd == null || o.priceUsd < best.priceUsd) ? o : best), pool[0]);
+  return pool.reduce((best, o) => {
+    const bestP = minPrice(best);
+    const p = minPrice(o);
+    return p != null && (bestP == null || p < bestP) ? o : best;
+  }, pool[0]);
 }
 
 export default function App() {
@@ -133,18 +142,18 @@ export default function App() {
       }
       if (sel.length === 0) {
         const p = cheapestOf(opts);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: p.priceUsd });
-        total += (p.priceUsd || 0) * qty;
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p) });
+        total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: p.priceUsd });
-        total += (p.priceUsd || 0) * qty;
+        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p) });
+        total += (minPrice(p) || 0) * qty;
       } else {
         sel.forEach((id) => {
           const p = opts.find((o) => o.id === id);
           if (p) {
-            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: p.priceUsd });
-            total += p.priceUsd || 0;
+            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p) });
+            total += minPrice(p) || 0;
           }
         });
       }
@@ -385,17 +394,10 @@ export default function App() {
                           padding: "5px 7px",
                           background: "#0f1216",
                           color: SUBTEXT,
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: 6,
                         }}
                       >
-                        <span>{o.set} #{o.cn}</span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ color: o.priceUsd != null ? TEAL : SUBTEXT }}>
-                            {o.priceUsd != null ? `$${o.priceUsd.toFixed(2)}` : "—"}
-                          </span>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                          <span>{o.set} #{o.cn}</span>
                           {o.scryfallUri && (
                             <a
                               href={o.scryfallUri}
@@ -408,7 +410,25 @@ export default function App() {
                               <ExternalLink size={11} />
                             </a>
                           )}
-                        </span>
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3 }}>
+                          {o.prices?.usd == null && o.prices?.usdFoil == null && o.prices?.usdEtched == null && (
+                            <span>—</span>
+                          )}
+                          {o.prices?.usd != null && (
+                            <span style={{ color: TEAL }}>${o.prices.usd.toFixed(2)}</span>
+                          )}
+                          {o.prices?.usdFoil != null && (
+                            <span style={{ color: TEAL }}>
+                              <span style={{ color: SUBTEXT }}>foil </span>${o.prices.usdFoil.toFixed(2)}
+                            </span>
+                          )}
+                          {o.prices?.usdEtched != null && (
+                            <span style={{ color: TEAL }}>
+                              <span style={{ color: SUBTEXT }}>etched </span>${o.prices.usdEtched.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

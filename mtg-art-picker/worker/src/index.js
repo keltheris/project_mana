@@ -28,21 +28,24 @@ function shardFor(normalizedName) {
   return (hash >>> 0) % SHARD_COUNT;
 }
 
+function parsePrice(v) {
+  return v ? parseFloat(v) : null;
+}
+
 function leanPrinting(card) {
   const img = card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal || null;
   if (!img) return null;
-  const priceUsd = card.prices?.usd
-    ? parseFloat(card.prices.usd)
-    : card.prices?.usd_foil
-    ? parseFloat(card.prices.usd_foil)
-    : null;
   return {
     id: card.id,
     set: (card.set || "").toUpperCase(),
     setName: card.set_name,
     cn: card.collector_number,
     image: img,
-    priceUsd,
+    prices: {
+      usd: parsePrice(card.prices?.usd),
+      usdFoil: parsePrice(card.prices?.usd_foil),
+      usdEtched: parsePrice(card.prices?.usd_etched),
+    },
     tcgplayerId: card.tcgplayer_id || null,
     scryfallUri: card.scryfall_uri || null,
     releasedAt: card.released_at || "",
