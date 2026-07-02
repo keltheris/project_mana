@@ -1,0 +1,21 @@
+name = "mtg-art-picker-manifest"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+kv_namespaces = [
+  # Replace `id` with the namespace id printed by:
+  #   wrangler kv namespace create MANIFEST_KV
+  { binding = "MANIFEST_KV", id = "REPLACE_ME" }
+]
+
+# Runs once a day to rebuild the manifest from Scryfall's default_cards
+# bulk file. Time is UTC; adjust to whatever off-peak slot you prefer.
+[triggers]
+crons = ["7 6 * * *"]
+
+# The default_cards bulk file is large; if the scheduled job times out or
+# runs low on memory on your plan, raise this (Workers Paid plans support a
+# configurable CPU limit) or switch buildManifest() in src/index.js to a
+# streaming JSON parser instead of loading the whole file at once.
+[limits]
+cpu_ms = 300000

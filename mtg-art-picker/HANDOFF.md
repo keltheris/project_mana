@@ -10,19 +10,19 @@ A React tool for picking exact card printings/art for an MTG decklist, using Scr
 
 ## Outstanding work (in priority order)
 
-### 1. Attribution / Scryfall credit (confirmed, not yet built)
-- Add a credit footer on the landing/input screen: "Card data and images via Scryfall" linking to https://scryfall.com.
-- On each review "slide" (the per-card art-picking screen), add a small credit/link per printing that goes to that specific card's Scryfall page. Scryfall's card objects include a `scryfall_uri` field (not currently captured in `fetchPrints` — needs to be added to the returned object) that should be used for this link.
+### 1. Attribution / Scryfall credit — done
+- Credit footer on the input screen ("Card data and images via Scryfall" → https://scryfall.com).
+- Per-printing link to that print's Scryfall page on the review slide, using `scryfall_uri` (now captured in `fetchPrints`'s returned shape).
 
-### 2. Daily manifest architecture (the big piece)
-Goal: stop hitting Scryfall's live search API on every visitor's page load. Build:
-- A **Cloudflare Worker** with a **Cron Trigger** that runs once daily, downloads Scryfall's `default_cards` **Bulk Data** file (this is Scryfall's own recommended mechanism for exactly this use case — see https://scryfall.com/docs/api/bulk-data), filters it down to a lean index (card name → array of printings: set, collector number, image URL, price, scryfall_uri), and writes it into **Workers KV**.
-- A small API endpoint (`/api/prints?name=X`) on the same Worker (or a Pages Function) that the frontend calls instead of hitting Scryfall directly. Should read from KV, not call Scryfall live, except possibly as a fallback for a name with zero KV hits (very new card not yet in the daily snapshot) — in that fallback case, still respect Scryfall's rate-limit guidance (~100ms between calls).
-- Update `fetchPrints()` in `App.jsx` to call this new endpoint instead of `api.scryfall.com` directly.
+### 2. Daily manifest architecture — built, not yet deployed
+Built in `worker/`:
+- A Cloudflare Worker (`worker/src/index.js`) with a Cron Trigger that downloads Scryfall's `default_cards` bulk data file, filters to paper printings, and writes a lean index into Workers KV — sharded into 64 buckets (hashed by normalized card name) to stay within per-invocation subrequest limits.
+- `/api/prints?name=X` on the same Worker, reading from KV, falling back to a live (rate-limited) Scryfall search only on a zero-hit name.
+- `fetchPrints()` in `App.jsx` now calls this endpoint (`VITE_API_BASE` + `/api/prints`) instead of `api.scryfall.com` directly.
+- Verified locally end-to-end with `wrangler dev` (local KV simulation) + the Vite dev server — confirmed the KV-hit path, the missing-name 400, and the live-fallback error path all behave correctly. Could not verify against Scryfall's real bulk data or a live Cloudflare deployment from this sandbox (no outbound network access to Scryfall, no Cloudflare account credentials here).
 
-### 3. Deploy
-- Cloudflare Pages hosting the static frontend, git-connected (owner wants a GitHub repo — was about to set this up manually via `git`/GitHub CLI when we switched to handing this off to you for native GitHub integration).
-- Cloudflare Worker + KV namespace + Cron Trigger for the manifest job, deployed via `wrangler`.
+### 3. Deploy — not started, needs your Cloudflare account
+This step needs your Cloudflare login/credentials, which aren't available in this environment. See `worker/README.md` for the exact commands (`wrangler login`, `wrangler kv namespace create`, `wrangler deploy`) and for wiring the Worker onto the same route as the Pages site. Once you've run those, ping me if anything needs adjusting.
 
 ## Notes on constraints already agreed with the user
 - Must stay within Scryfall's API guidelines: no cropping/distorting card images, no watermarks, don't imply another game, don't paywall.

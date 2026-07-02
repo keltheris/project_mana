@@ -29,35 +29,20 @@ function parseList(text) {
   return Array.from(map.entries()).map(([name, qty]) => ({ name, qty }));
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+// Reads from the daily manifest built by worker/src/index.js instead of
+// hitting Scryfall's live search API on every visitor's page load. See
+// HANDOFF.md and worker/README.md for the full architecture.
 async function fetchPrints(name) {
-  const q = `!"${name.replace(/"/g, '\\"')}" unique:prints game:paper`;
-  const url = `https://api.scryfall.com/cards/search?order=released&dir=desc&q=${encodeURIComponent(q)}`;
+  const url = `${API_BASE}/api/prints?name=${encodeURIComponent(name)}`;
   const res = await fetch(url);
   if (!res.ok) {
     if (res.status === 404) return [];
-    throw new Error(`Scryfall returned ${res.status} for "${name}"`);
+    throw new Error(`Manifest API returned ${res.status} for "${name}"`);
   }
   const json = await res.json();
-  return (json.data || [])
-    .map((c) => {
-      const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
-      const priceUsd = c.prices?.usd
-        ? parseFloat(c.prices.usd)
-        : c.prices?.usd_foil
-        ? parseFloat(c.prices.usd_foil)
-        : null;
-      return {
-        id: c.id,
-        set: (c.set || "").toUpperCase(),
-        setName: c.set_name,
-        cn: c.collector_number,
-        image: img,
-        priceUsd,
-        tcgplayerId: c.tcgplayer_id || null,
-        scryfallUri: c.scryfall_uri || null,
-      };
-    })
-    .filter((o) => o.image);
+  return Array.isArray(json) ? json.filter((o) => o.image) : [];
 }
 
 function cheapestOf(opts) {
@@ -96,7 +81,6 @@ export default function App() {
       } catch (e) {
         opts[name] = [];
       }
-      await new Promise((r) => setTimeout(r, 110));
     }
     setProgress({ done: parsed.length, total: parsed.length, current: "" });
     setPrintOptions(opts);
