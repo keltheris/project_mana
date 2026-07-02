@@ -115,14 +115,20 @@ export default function App() {
   const [zoomed, setZoomed] = useState(null);
   const [outputTab, setOutputTab] = useState("search"); // search | massentry
   const compileRunId = useRef(0);
+  const zoomCloseRef = useRef(null);
+  const zoomReturnFocusRef = useRef(null);
 
+  // Standard modal focus handling: move focus into the zoom overlay when it
+  // opens (so the background grid isn't left silently eating keystrokes)
+  // and hand it back to whatever triggered the zoom when it closes.
   useEffect(() => {
-    if (!zoomed) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") setZoomed(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    if (zoomed) {
+      zoomReturnFocusRef.current = document.activeElement;
+      zoomCloseRef.current?.focus();
+    } else if (zoomReturnFocusRef.current) {
+      zoomReturnFocusRef.current.focus();
+      zoomReturnFocusRef.current = null;
+    }
   }, [zoomed]);
 
   const handleCompile = useCallback(async () => {
@@ -183,6 +189,55 @@ export default function App() {
     }
   };
 
+  // Shared by the review grid's render and the keyboard handler below, so
+  // arrow-key navigation inside the zoom view walks the same ordering the
+  // grid displays instead of computing it a second, possibly different, way.
+  const sortedOptsFor = (name) => {
+    const opts = printOptions[name] || [];
+    return [...opts].sort((a, b) => Number(isMassEntryRisky(a)) - Number(isMassEntryRisky(b)));
+  };
+
+  // Card-to-card navigation (when nothing is zoomed) and in-zoom navigation
+  // both live here rather than as separate effects, since both keys (arrows)
+  // mean different things depending on whether the zoom overlay is open.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (zoomed) {
+        const { name } = entries[reviewIndex] || {};
+        if (!name) return;
+        if (e.key === "Escape") {
+          setZoomed(null);
+        } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          const list = sortedOptsFor(name);
+          const idx = list.findIndex((o) => o.id === zoomed.id);
+          const next = list[e.key === "ArrowRight" ? idx + 1 : idx - 1];
+          if (next) {
+            e.preventDefault();
+            setZoomed(next);
+          }
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleSelect(name, zoomed.id);
+        }
+        return;
+      }
+
+      if (stage !== "review") return;
+      const tag = document.activeElement?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT") return;
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomed, stage, reviewIndex, entries, printOptions]);
+
   const buildOutput = () => {
     const lines = [];
     let total = 0;
@@ -239,7 +294,8 @@ export default function App() {
       .mono { font-family: 'IBM Plex Mono', monospace; }
       ::selection { background: #b23a48; color: #ece4d3; }
       .art-zoom-btn { opacity: 0.7; transition: opacity 0.15s, transform 0.15s; }
-      .art-card:hover .art-zoom-btn { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      .art-card:hover .art-zoom-btn, .art-card:focus-within .art-zoom-btn { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      .art-card:focus-visible, .art-zoom-btn:focus-visible { outline: 2px solid ${TEAL}; outline-offset: 2px; }
     `}</style>
   );
 
@@ -411,7 +467,7 @@ export default function App() {
     const { name, qty } = entries[reviewIndex];
     const opts = printOptions[name] || [];
     const sel = selections[name] || new Set();
-    const sortedOpts = [...opts].sort((a, b) => Number(isMassEntryRisky(a)) - Number(isMassEntryRisky(b)));
+    const sortedOpts = sortedOptsFor(name);
     const shown = sortedOpts.slice(0, visibleCount);
     const firstRiskyIndex = shown.findIndex((o) => isMassEntryRisky(o));
 
@@ -469,6 +525,16 @@ export default function App() {
                     <div
                       className="art-card"
                       onClick={() => toggleSelect(name, o.id)}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSel}
+                      aria-label={`${name} — ${o.setName}, ${o.set} #${o.cn}${isSel ? ", selected" : ""}`}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleSelect(name, o.id);
+                        }
+                      }}
                       style={{
                         cursor: "pointer",
                         position: "relative",
@@ -485,6 +551,15 @@ export default function App() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setZoomed(o);
+                        }}
+                        onKeyDown={(e) => {
+                          // Only Enter/Space need stopping — those are the keys the
+                          // parent card also listens for, and letting this event
+                          // bubble up would preventDefault() the button's own native
+                          // click-on-Enter before it fires. Other keys (Escape, the
+                          // in-zoom arrow nav) must keep bubbling to the window
+                          // listener, which is why this isn't a blanket stopPropagation.
+                          if (e.key === "Enter" || e.key === " ") e.stopPropagation();
                         }}
                         title="Zoom in"
                         style={{
@@ -563,6 +638,9 @@ export default function App() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                              }}
                               title="View on Scryfall"
                               style={{ color: SUBTEXT, display: "flex", alignItems: "center" }}
                             >
@@ -707,6 +785,12 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          <p className="mono" style={{ color: SUBTEXT, fontSize: 10.5, letterSpacing: "0.03em", marginTop: 14 }}>
+            Keyboard: <span style={{ color: TEXT }}>← →</span> switch cards ·{" "}
+            <span style={{ color: TEXT }}>Tab</span>, then <span style={{ color: TEXT }}>Enter</span> to pick a
+            printing · <span style={{ color: TEXT }}>Esc</span> closes zoom
+          </p>
         </div>
 
         {zoomed && (
@@ -726,6 +810,7 @@ export default function App() {
             }}
           >
             <button
+              ref={zoomCloseRef}
               onClick={() => setZoomed(null)}
               title="Close"
               style={{
@@ -745,21 +830,68 @@ export default function App() {
             >
               <X size={18} color={TEXT} />
             </button>
-            <img
-              src={zoomed.image}
-              alt={`${name} — ${zoomed.setName}`}
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                maxWidth: "min(90vw, 560px)",
-                maxHeight: "80vh",
-                borderRadius: 14,
-                boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
-                cursor: "default",
-              }}
-            />
+            <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+              <img
+                src={zoomed.image}
+                alt={`${name} — ${zoomed.setName}`}
+                style={{
+                  maxWidth: "min(90vw, 560px)",
+                  maxHeight: "80vh",
+                  display: "block",
+                  borderRadius: 14,
+                  boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+                  cursor: "default",
+                }}
+              />
+              {sel.has(zoomed.id) && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 10,
+                    right: 10,
+                    width: 28,
+                    height: 28,
+                    borderRadius: "50%",
+                    background: ACCENT,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.4)",
+                  }}
+                >
+                  <Check size={16} color="#fff" strokeWidth={3} />
+                </div>
+              )}
+            </div>
             <div className="mono" style={{ color: SUBTEXT, fontSize: 13, marginTop: 14, textAlign: "center" }}>
               {zoomed.setName} · {zoomed.set} #{zoomed.cn}
             </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleSelect(name, zoomed.id);
+              }}
+              className="inter"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 12,
+                background: sel.has(zoomed.id) ? ACCENT : "transparent",
+                color: sel.has(zoomed.id) ? "#fff" : TEXT,
+                border: `1px solid ${sel.has(zoomed.id) ? ACCENT : "#2a323d"}`,
+                borderRadius: 6,
+                padding: "8px 16px",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <Check size={14} /> {sel.has(zoomed.id) ? "Selected" : "Select this printing"}
+            </button>
+            <p className="mono" style={{ color: SUBTEXT, fontSize: 10.5, marginTop: 16, textAlign: "center" }}>
+              ← → browse printings · Enter select · Esc close
+            </p>
           </div>
         )}
       </div>
