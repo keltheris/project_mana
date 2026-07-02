@@ -65,6 +65,32 @@ function isMassEntryRisky(o) {
   return !!(o.promo || o.treatment || o.set === "SLD" || !o.tcgplayerId);
 }
 
+function massEntryLine(l) {
+  return l.missing ? `${l.qty} ${l.name}   [NOT FOUND — verify manually]` : `${l.qty} ${l.name} [${l.set}] ${l.cn}`;
+}
+
+// Unlike the Mass Entry syntax, this doesn't need to exactly match a
+// [SET] collector-number pair — it just needs to contain words TCGplayer's
+// own product search can find, so it holds up for prints (Secret Lair,
+// promos, special treatments) that Mass Entry's strict matching rejects.
+function searchableLine(l) {
+  if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
+  const treatment = l.treatment ? ` · ${l.treatment}` : "";
+  return `${l.qty} ${l.name} — ${l.setName} (${l.set}) #${l.cn}${treatment}`;
+}
+
+const MASS_ENTRY_PREFILL_MAX_URL_LENGTH = 6000;
+
+// TCGplayer's Mass Entry page reads a `c` query param to pre-seed its own
+// textbox (each entry prefixed with `||`), so this still goes through the
+// same fuzzy set/number matching as a manual paste — it only removes the
+// copy/paste step, it doesn't fix what Mass Entry gets wrong.
+function buildMassEntryPrefillUrl(lines) {
+  const c = lines.map((l) => `||${massEntryLine(l)}`).join("");
+  const url = `${TCGPLAYER_MASS_ENTRY_URL}?productline=Magic&c=${encodeURIComponent(c)}`;
+  return url.length <= MASS_ENTRY_PREFILL_MAX_URL_LENGTH ? url : TCGPLAYER_MASS_ENTRY_URL;
+}
+
 function cheapestOf(opts) {
   const priced = opts.filter((o) => minPrice(o) != null);
   const pool = priced.length ? priced : opts;
@@ -87,6 +113,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [zoomed, setZoomed] = useState(null);
+  const [outputTab, setOutputTab] = useState("search"); // search | massentry
   const compileRunId = useRef(0);
 
   useEffect(() => {
@@ -170,17 +197,17 @@ export default function App() {
       }
       if (sel.length === 0) {
         const p = cheapestOf(opts);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
         total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
         total += (minPrice(p) || 0) * qty;
       } else {
         sel.forEach((id) => {
           const p = opts.find((o) => o.id === id);
           if (p) {
-            lines.push({ qty: 1, name, set: p.set, cn: p.cn, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+            lines.push({ qty: 1, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
             total += minPrice(p) || 0;
           }
         });
@@ -200,6 +227,7 @@ export default function App() {
     setError(null);
     setCopied(false);
     setZoomed(null);
+    setOutputTab("search");
   };
 
   const fontImport = (
@@ -741,9 +769,10 @@ export default function App() {
   // ---------- DONE STAGE ----------
   if (stage === "done") {
     const { lines, total, unresolved } = buildOutput();
-    const outputText = lines
-      .map((l) => (l.missing ? `${l.qty} ${l.name}   [NOT FOUND — verify manually]` : `${l.qty} ${l.name} [${l.set}] ${l.cn}`))
-      .join("\n");
+    const searchText = lines.map(searchableLine).join("\n");
+    const massEntryText = lines.map(massEntryLine).join("\n");
+    const outputText = outputTab === "search" ? searchText : massEntryText;
+    const massEntryPrefillUrl = buildMassEntryPrefillUrl(lines);
 
     const copy = async () => {
       try {
@@ -777,6 +806,34 @@ export default function App() {
             TCGplayer before buying. Something look wrong? Use the "Feedback" button in the corner.
           </p>
 
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {[
+              { id: "search", label: "Search names" },
+              { id: "massentry", label: "Mass Entry format" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setOutputTab(t.id)}
+                className="inter"
+                style={{
+                  background: outputTab === t.id ? PANEL_BG : "transparent",
+                  color: outputTab === t.id ? TEXT : SUBTEXT,
+                  border: `1px solid ${outputTab === t.id ? "#3a4148" : "#2a323d"}`,
+                  borderBottom: outputTab === t.id ? "1px solid " + PANEL_BG : `1px solid #2a323d`,
+                  borderRadius: "6px 6px 0 0",
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  fontWeight: outputTab === t.id ? 600 : 400,
+                  cursor: "pointer",
+                  position: "relative",
+                  top: 1,
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
           <textarea
             readOnly
             value={outputText}
@@ -786,7 +843,7 @@ export default function App() {
               minHeight: 260,
               background: PANEL_BG,
               border: "1px solid #2a323d",
-              borderRadius: 6,
+              borderRadius: "0 6px 6px 6px",
               color: TEXT,
               padding: 16,
               fontSize: 13,
@@ -796,7 +853,26 @@ export default function App() {
             }}
           />
 
-          <div style={{ display: "flex", gap: 12, marginTop: 18, flexWrap: "wrap" }}>
+          <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 10 }}>
+            {outputTab === "search" ? (
+              <>
+                Each line is written to paste into <span className="mono">TCGplayer's own search bar</span> — card
+                name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
+                special treatments) that Mass Entry's strict matching often gets wrong.
+              </>
+            ) : (
+              <>
+                Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
+                <a href={TCGPLAYER_MASS_ENTRY_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
+                  TCGplayer's Mass Entry
+                </a>{" "}
+                syntax. Works well for standard boosters — for Secret Lair, promos, and special treatments, use the
+                "Search names" tab or the direct links below instead.
+              </>
+            )}
+          </p>
+
+          <div style={{ display: "flex", gap: 12, marginTop: 14, flexWrap: "wrap" }}>
             <button
               onClick={copy}
               className="inter"
@@ -817,10 +893,11 @@ export default function App() {
               <Copy size={15} /> {copied ? "Copied!" : "Copy list"}
             </button>
             <a
-              href={TCGPLAYER_MASS_ENTRY_URL}
+              href={massEntryPrefillUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inter"
+              title="Opens Mass Entry with this list already typed in — you'll still want to review it there before checkout"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -836,7 +913,7 @@ export default function App() {
                 textDecoration: "none",
               }}
             >
-              Open TCGplayer Mass Entry <ExternalLink size={15} />
+              Open in Mass Entry, pre-filled <ExternalLink size={15} />
             </a>
             <button
               onClick={reset}
@@ -858,57 +935,48 @@ export default function App() {
             </button>
           </div>
 
-          <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 24 }}>
-            Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
-            <a href={TCGPLAYER_MASS_ENTRY_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
-              TCGplayer's Mass Entry
-            </a>{" "}
-            syntax — paste this list directly in to add the exact printings you picked, not just any copy of each card.
-          </p>
-
-          {lines.some((l) => l.risky) && (
-            <div style={{ marginTop: 28 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, color: "#c9a227", fontSize: 12.5, marginBottom: 10 }}>
-                <AlertTriangle size={14} />
-                These printings run a risk of not pasting correctly into Mass Entry — use these direct links instead
-              </div>
-              <div style={{ border: "1px solid rgba(201,162,39,0.35)", borderRadius: 6, overflow: "hidden" }}>
-                {lines
-                  .filter((l) => l.risky)
-                  .map((l, i) => (
-                    <div
-                      key={i}
-                      className="mono"
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "9px 12px",
-                        fontSize: 12.5,
-                        borderTop: i === 0 ? "none" : "1px solid rgba(201,162,39,0.2)",
-                        color: SUBTEXT,
-                      }}
-                    >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
+          {lines.length > 0 && (
+            <div style={{ marginTop: 32 }}>
+              <div style={{ color: TEXT, fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Direct TCGplayer links</div>
+              <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.5, marginBottom: 10 }}>
+                One link per card, straight to the exact printing you picked — always correct, since it's a real
+                product page rather than a text match.
+              </p>
+              <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
+                {lines.map((l, i) => (
+                  <div
+                    key={i}
+                    className="mono"
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "9px 12px",
+                      fontSize: 12.5,
+                      borderTop: i === 0 ? "none" : "1px solid #2a323d",
+                      color: SUBTEXT,
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
+                    </span>
+                    {l.tcgplayerId ? (
+                      <a
+                        href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                      >
+                        TCGplayer <ExternalLink size={11} />
+                      </a>
+                    ) : (
+                      <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
+                        no link found
                       </span>
-                      {l.tcgplayerId ? (
-                        <a
-                          href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
-                        >
-                          TCGplayer <ExternalLink size={11} />
-                        </a>
-                      ) : (
-                        <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
-                          no link found
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
