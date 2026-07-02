@@ -616,7 +616,7 @@ export default function App() {
   if (stage === "done") {
     const { lines, total, unresolved } = buildOutput();
     const outputText = lines
-      .map((l) => (l.missing ? `${l.qty} ${l.name}   [NOT FOUND — verify manually]` : `${l.qty} ${l.name} (${l.set}) #${l.cn}`))
+      .map((l) => (l.missing ? `${l.qty} ${l.name}   [NOT FOUND — verify manually]` : `${l.qty} ${l.name} [${l.set}] ${l.cn}`))
       .join("\n");
 
     const copy = async () => {
@@ -705,9 +705,11 @@ export default function App() {
           </div>
 
           <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 24 }}>
-            Format is <span className="mono">qty · name · (SET) #collector-number</span>. TCGplayer's mass-entry tool
-            reads card names directly; the set/number is there so you can manually confirm you're adding the exact
-            printing you picked if the auto-match grabs a different one.
+            Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
+            <a href="https://www.tcgplayer.com/massentry" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
+              TCGplayer's Mass Entry
+            </a>{" "}
+            syntax — paste this list directly in to add the exact printings you picked, not just any copy of each card.
           </p>
         </div>
       </div>
