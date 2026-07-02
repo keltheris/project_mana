@@ -1,0 +1,7 @@
+name = "mtg-art-picker"
+compatibility_date = "2025-01-01"
+pages_build_output_dir = "dist"
+
+kv_namespaces = [
+  { binding = "MANIFEST_KV", id = "fc661a151d0c431c9e0e069c0bdccbc5" }
+]

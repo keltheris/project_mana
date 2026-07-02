@@ -37,25 +37,34 @@ afterward.
 
 ## 3. Create the Pages project
 
-In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect
-to Git**, select the `keltheris/project_mana` repo, and set:
+Cloudflare's dashboard now funnels this through a unified "Create a Worker →
+Connect to Git" flow rather than a separate classic "Pages" product. It
+expects config declared in a `wrangler.toml` rather than pure dashboard
+clicks, which is why `mtg-art-picker/wrangler.toml` is committed to the repo
+with `pages_build_output_dir = "dist"` and the `MANIFEST_KV` binding
+(pointing at the same namespace id from step 1) already in it.
 
-- **Root directory**: `mtg-art-picker`
+**Workers & Pages → Create → Connect to Git**, select `keltheris/project_mana`,
+and on the setup screen:
+
 - **Build command**: `npm run build`
-- **Build output directory**: `dist`
+- Expand **Advanced settings** → **Path**: `mtg-art-picker` (this is the
+  monorepo-subdirectory equivalent of "root directory" — the app isn't at
+  the repo root)
+- Leave **Deploy command** / **Non-production branch deploy command** as
+  whatever it defaults to (`wrangler deploy` / `wrangler versions upload`) —
+  the committed `wrangler.toml` tells it to build this as a static site +
+  Pages Functions rather than a plain Worker.
 
-Deploy. The site will build and serve, but `/api/prints` won't work yet —
-that's the next step.
+Deploy. If the branch you're deploying isn't the repo's default branch,
+Cloudflare treats it as non-production and gives you a preview URL rather
+than a "production" one — that's fine for beta testing.
 
-## 4. Bind KV to the Pages project
+## 4. KV binding
 
-**Pages project → Settings → Functions → KV namespace bindings → Add
-binding**:
-
-- Variable name: `MANIFEST_KV`
-- KV namespace: the same one from step 1
-
-Save, then retry/redeploy so the binding takes effect.
+No separate dashboard step needed here anymore — the binding lives in the
+committed `wrangler.toml` from step 3, so it's already wired up once that
+first build completes.
 
 ## 5. Attach project-mana.com
 
