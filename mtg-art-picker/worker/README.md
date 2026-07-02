@@ -1,11 +1,12 @@
 # Manifest worker (cron only)
 
 Runs once a day, downloads Scryfall's `default_cards` bulk data file, and
-writes a lean index into Workers KV. This Worker has no HTTP-facing role —
-reads happen through `functions/api/prints.js`, a Cloudflare Pages Function
-co-located with the frontend (see `../DEPLOY.md` for the full picture).
-Both sides share their sharding/lookup logic from `../shared/manifest.js` so
-they can never disagree about where a card's data lives in KV.
+writes a lean index into Workers KV. This Worker has no HTTP-facing role
+(other than the temporary `/trigger` bootstrap route, see `HANDOFF.md`) —
+reads happen through `../worker-entry.js`, the entry point for the
+*separate* frontend Worker (see `../DEPLOY.md` for the full picture). Both
+sides share their sharding/lookup logic from `../shared/manifest.js` so they
+can never disagree about where a card's data lives in KV.
 
 ## One-time setup (requires your own Cloudflare account)
 
@@ -25,9 +26,8 @@ Paste the printed `id` into `wrangler.toml`'s `kv_namespaces` entry (replacing
 npm run deploy
 ```
 
-**Use this same namespace id** when adding the KV binding to the Pages
-project (see `../DEPLOY.md`) — the Worker writes to it, the Pages Function
-reads from it.
+**Use this same namespace id** in the frontend Worker's `wrangler.toml` (see
+`../DEPLOY.md`) — this Worker writes to it, `worker-entry.js` reads from it.
 
 The Cron Trigger in `wrangler.toml` will run the manifest build automatically
 once a day. To populate KV immediately instead of waiting for the first

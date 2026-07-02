@@ -4,9 +4,9 @@ A tool for picking exact card printings/art for your Magic: The Gathering deckli
 
 ## Architecture
 
-- **Frontend**: this Vite/React app (`src/`), deployed on **Cloudflare Pages**.
-- **`/api/prints?name=X`**: a Cloudflare Pages Function (`functions/`) that reads from a daily-refreshed KV index instead of calling Scryfall live on every visitor's page load.
-- **`worker/`**: a separate Cloudflare Worker with a Cron Trigger that rebuilds that KV index once a day from Scryfall's bulk data.
+- **Frontend**: this Vite/React app (`src/`), built to `dist/`.
+- **`worker-entry.js`**: the Cloudflare Worker (deployed as the "projectmana" Worker) that serves the built frontend as static assets and handles `/api/prints?name=X` directly, reading from a daily-refreshed KV index instead of calling Scryfall live on every visitor's page load. Config is in the root `wrangler.toml` (uses Cloudflare's "Workers with static assets" model, not a separate classic Pages project).
+- **`worker/`**: a *separate* Cloudflare Worker with a Cron Trigger that rebuilds that KV index once a day from Scryfall's bulk data, deployed independently.
 
 See `HANDOFF.md` for the full history/rationale and `DEPLOY.md` for step-by-step deploy instructions.
 
@@ -18,4 +18,4 @@ npm run dev      # Vite dev server for the frontend
 npm run build    # builds dist/ for deployment
 ```
 
-`/api/prints` needs the Pages Function + KV running alongside it locally — see `DEPLOY.md` and `.env.example` for pointing the dev server at a local `wrangler pages dev` instance.
+`/api/prints` needs `worker-entry.js` + KV running alongside it locally — see `DEPLOY.md` and `.env.example` for pointing the dev server at a local `wrangler dev` instance.

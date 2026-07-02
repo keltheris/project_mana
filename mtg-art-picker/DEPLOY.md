@@ -35,47 +35,57 @@ This run downloads and processes Scryfall's full card database, so give it
 a few minutes and check the Logs tab if `/api/prints` comes back empty
 afterward.
 
-## 3. Create the Pages project
+## 3. Create the frontend Worker
 
-Cloudflare's dashboard now funnels this through a unified "Create a Worker →
-Connect to Git" flow rather than a separate classic "Pages" product. It
-expects config declared in a `wrangler.toml` rather than pure dashboard
-clicks, which is why `mtg-art-picker/wrangler.toml` is committed to the repo
-with `pages_build_output_dir = "dist"` and the `MANIFEST_KV` binding
-(pointing at the same namespace id from step 1) already in it.
+Cloudflare's dashboard now funnels git-connected deploys through a unified
+"Create a Worker → Connect to Git" flow. Despite the name, this creates a
+genuine Worker (not a classic separate "Pages" project) — there's no
+`wrangler pages deploy` target here, only `wrangler deploy`. The static
+frontend is served via a `[assets]` binding, and `/api/prints` is handled
+directly in `worker-entry.js`, both declared in the committed
+`mtg-art-picker/wrangler.toml` (which also has the `MANIFEST_KV` binding,
+pointing at the same namespace id from step 1).
 
 **Workers & Pages → Create → Connect to Git**, select `keltheris/project_mana`,
 and on the setup screen:
 
+- **Project name**: something dash/lowercase-only (Cloudflare rejects
+  underscores) — this becomes part of the deploy command below, so know
+  what you picked.
 - **Build command**: `npm run build`
 - Expand **Advanced settings** → **Path**: `mtg-art-picker` (this is the
   monorepo-subdirectory equivalent of "root directory" — the app isn't at
   the repo root)
-- Leave **Deploy command** / **Non-production branch deploy command** as
-  whatever it defaults to (`wrangler deploy` / `wrangler versions upload`) —
-  the committed `wrangler.toml` tells it to build this as a static site +
-  Pages Functions rather than a plain Worker.
+- **Deploy command** / **Version command**: leave as the default
+  `npx wrangler deploy` / `npx wrangler versions upload` — do **not** change
+  these to `wrangler pages deploy`, that only works for classic Pages
+  projects and will fail with "Project not found" here.
 
 Deploy. If the branch you're deploying isn't the repo's default branch,
 Cloudflare treats it as non-production and gives you a preview URL rather
 than a "production" one — that's fine for beta testing.
 
+If the deploy fails with an authentication/permission error on the
+auto-generated build API token, go to **dash.cloudflare.com/profile/api-tokens**,
+find the token this project created, and make sure it has **Account →
+Workers Scripts → Edit** permission (edit the token or create a new one with
+that scope, then update it in the project's Build configuration settings).
+
 ## 4. KV binding
 
-No separate dashboard step needed here anymore — the binding lives in the
-committed `wrangler.toml` from step 3, so it's already wired up once that
-first build completes.
+No separate dashboard step needed here — the binding lives in the committed
+`wrangler.toml` from step 3, so it's already wired up once that first
+successful build completes.
 
 ## 5. Attach project-mana.com
 
-**Pages project → Custom domains → Set up a custom domain** → enter
-`project-mana.com` (root/apex, pointing directly at this project, per your
-call). If the domain isn't already on Cloudflare, you'll be prompted to add
-it as a zone and update your nameservers at your registrar first — Cloudflare
-flattens apex-domain records automatically for Pages, so pointing the bare
-root domain at a Pages project is supported (no need for a `www` redirect
-workaround). DNS propagation and SSL cert issuance are usually done within
-minutes, occasionally longer depending on registrar/nameserver timing.
+**Worker project → Settings → Domains & Routes** (or **Custom domains**,
+wording may vary) → add `project-mana.com` (root/apex, pointing directly at
+this project, per your call). If the domain isn't already on Cloudflare,
+you'll be prompted to add it as a zone and update your nameservers at your
+registrar first. DNS propagation and SSL cert issuance are usually done
+within minutes, occasionally longer depending on registrar/nameserver
+timing.
 
 ## 6. Smoke test
 

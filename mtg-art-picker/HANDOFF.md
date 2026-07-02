@@ -14,15 +14,15 @@ A React tool for picking exact card printings/art for an MTG decklist, using Scr
 - Credit footer on the input screen ("Card data and images via Scryfall" → https://scryfall.com).
 - Per-printing link to that print's Scryfall page on the review slide, using `scryfall_uri` (now captured in `fetchPrints`'s returned shape).
 
-### 2. Daily manifest architecture — built, not yet deployed
-- A Cloudflare Worker (`worker/src/index.js`) with a Cron Trigger that downloads Scryfall's `default_cards` bulk data file, filters to paper printings, and writes a lean index into Workers KV — sharded into 64 buckets (hashed by normalized card name) to stay within per-invocation subrequest limits.
-- `/api/prints?name=X` is a Cloudflare Pages Function (`functions/api/prints.js`), co-located with the static frontend so it serves from whatever domain the Pages project is on (no custom Worker route or separate domain needed). Reads from KV, falling back to a live (rate-limited) Scryfall search only on a zero-hit name.
-- Sharding/lookup logic lives once in `shared/manifest.js`, imported by both the Worker (writer) and the Pages Function (reader), so they can't disagree about where a card lives in KV.
+### 2. Daily manifest architecture — built and populated
+- A Cloudflare Worker (`worker/src/index.js`) with a Cron Trigger that downloads Scryfall's `default_cards` bulk data file, filters to paper printings, and writes a lean index into Workers KV — sharded into 64 buckets (hashed by normalized card name) to stay within per-invocation subrequest limits. Stream-parses the bulk file (see the big comment in `shared/manifest.js`) rather than buffering it whole — the first real deploy hit a memory-limit error doing that, since the file is hundreds of MB.
+- `/api/prints?name=X` is handled directly in `worker-entry.js`, the entry point for the deployed "projectmana" Worker (falls through to `env.ASSETS.fetch()` for everything else, serving the built frontend). **Note:** this started out built as a Cloudflare Pages Function (`functions/api/prints.js`) on the assumption of a classic separate Pages project, but the dashboard's "Create a Worker → Connect to Git" flow actually creates a genuine Worker using the newer "Workers with static assets" model — no such thing as a Pages project existed for it to attach to. Reworked into `worker-entry.js` + `[assets]` binding in `wrangler.toml` once that became clear; `functions/` was deleted.
+- Sharding/lookup logic lives once in `shared/manifest.js`, imported by both `worker/` (the cron writer) and `worker-entry.js` (the reader), so they can't disagree about where a card lives in KV.
 - `fetchPrints()` in `App.jsx` calls `/api/prints` (via `VITE_API_BASE` for local dev) instead of `api.scryfall.com` directly.
-- Verified locally end-to-end with `wrangler pages dev` (local KV simulation) — confirmed the KV-hit path returns the right shape, the missing-name case 400s, and the live-fallback error path is handled cleanly. Could not verify against Scryfall's real bulk data or a live Cloudflare deployment from this sandbox (no outbound network access to Scryfall, no Cloudflare account credentials here).
+- Manually triggered once via the temporary `/trigger` endpoint (see the TODO below) — confirmed **106,351 printings** loaded into KV from real Scryfall data.
 
-### 3. Deploy — needs your Cloudflare account, steps documented
-Full step-by-step commands are in `DEPLOY.md`, including wiring up the custom domain **project-mana.com** (root domain → this Pages project, per your call). Ping me once you've gone through it if anything needs adjusting.
+### 3. Deploy — in progress
+Full step-by-step commands are in `DEPLOY.md`, including wiring up the custom domain **project-mana.com** (root domain → this Worker, per your call). Deploy has been a longer back-and-forth than expected because Cloudflare's dashboard flow didn't match what `DEPLOY.md` originally assumed (see the note in item 2 above) — docs have been corrected as we've gone.
 
 **TODO — remove after beta:** `worker/src/index.js` currently has a `/trigger` HTTP route (gated on a `TRIGGER_SECRET`) added to bootstrap KV manually since a dashboard "trigger cron now" button wasn't easy to find. This was explicitly agreed to be temporary — once beta testing confirms the daily Cron Trigger is running on its own, remove the `fetch` handler from that file (keep only `scheduled`) and delete the `TRIGGER_SECRET` secret (`wrangler secret delete TRIGGER_SECRET`), so there's no standing HTTP-triggerable endpoint on the account.
 

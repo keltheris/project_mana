@@ -1,6 +1,6 @@
 // Shared between worker/src/index.js (the daily cron builder) and
-// functions/api/prints.js (the Pages Function that reads what the cron
-// job wrote). Keeping the sharding/normalization logic in one place is
+// worker-entry.js (the frontend Worker that reads what the cron job
+// wrote). Keeping the sharding/normalization logic in one place is
 // load-bearing: if the writer and reader ever computed shard indexes
 // differently, every lookup would silently miss.
 
