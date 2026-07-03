@@ -131,32 +131,6 @@ function buildMassEntryPrefillUrl(lines) {
 // can check the same flag rather than each growing its own toggle.
 const WARNINGS_DISABLED_STORAGE_KEY = "pm_disable_warnings";
 
-// Each selected print gets 1 copy baseline; any extra copies needed to
-// reach the card's original qty all pile onto whichever selected print is
-// cheapest (ties go to the earliest-selected — Array.from(Set) preserves
-// selection order), rather than being spread evenly across prints the user
-// deliberately picked. allocateQty(5, [$3, $5]) => [4, 1]. If more prints
-// are selected than the qty allows, only the first `qty` (selection order)
-// get a copy; the rest get 0 and simply don't appear, rather than forcing a
-// per-print quantity picker into the UI.
-function allocateQty(qty, prints) {
-  if (prints.length >= qty) {
-    return prints.map((_, i) => (i < qty ? 1 : 0));
-  }
-  const counts = prints.map(() => 1);
-  let cheapestIndex = 0;
-  let cheapestPrice = minPrice(prints[0]);
-  for (let i = 1; i < prints.length; i++) {
-    const p = minPrice(prints[i]);
-    if (p != null && (cheapestPrice == null || p < cheapestPrice)) {
-      cheapestPrice = p;
-      cheapestIndex = i;
-    }
-  }
-  counts[cheapestIndex] += qty - prints.length;
-  return counts;
-}
-
 function cheapestOf(opts) {
   const priced = opts.filter((o) => minPrice(o) != null);
   const pool = priced.length ? priced : opts;
@@ -165,6 +139,66 @@ function cheapestOf(opts) {
     const p = minPrice(o);
     return p != null && (bestP == null || p < bestP) ? o : best;
   }, pool[0]);
+}
+
+// Default allocation when there's no valid custom split: 1 copy of each
+// selected print, with any remaining copies going to the single cheapest
+// printing across every option for the card — not just the selected ones —
+// since the point is "you get what you picked, plus the least expensive way
+// to make up the rest," not a duplicate of something you already chose.
+// Returns [{ print, qty }], already filtered to qty > 0. If the
+// cheapest-overall print happens to already be one of the selected prints,
+// its count just increases instead of appearing as a second line for the
+// same printing. If more prints are selected than the qty allows, only the
+// first `qty` (selection order) get a copy; the rest get 0.
+function defaultAllocation(qty, selectedPrints, allOpts) {
+  if (selectedPrints.length >= qty) {
+    return selectedPrints.map((print, i) => ({ print, qty: i < qty ? 1 : 0 })).filter((e) => e.qty > 0);
+  }
+  const entries = selectedPrints.map((print) => ({ print, qty: 1 }));
+  const excess = qty - selectedPrints.length;
+  const cheapest = cheapestOf(allOpts);
+  const match = entries.find((e) => e.print.id === cheapest.id);
+  if (match) match.qty += excess;
+  else entries.push({ print: cheapest, qty: excess });
+  return entries;
+}
+
+// Seeds the advanced split editor with the same numbers defaultAllocation
+// would produce, laid out as one cell per selected print (selection order)
+// plus a final "cheapest available" cell — always N+1 cells, even if the
+// cheapest-overall print happens to coincide with one already selected;
+// output-side merging (see defaultAllocation/customAllocation) handles that,
+// the editor itself stays a simple fixed layout.
+function defaultSplitCells(qty, selectedPrints) {
+  if (selectedPrints.length >= qty) {
+    return [...selectedPrints.map((_, i) => (i < qty ? 1 : 0)), 0];
+  }
+  return [...selectedPrints.map(() => 1), qty - selectedPrints.length];
+}
+
+// Applies a user-entered split (validated elsewhere to be non-negative
+// integers summing to qty) — same shape and merge behavior as
+// defaultAllocation, just with counts the user chose instead of computed.
+function customAllocation(cells, selectedPrints, allOpts) {
+  const entries = selectedPrints.map((print, i) => ({ print, qty: cells[i] || 0 }));
+  const cheapestQty = cells[cells.length - 1] || 0;
+  if (cheapestQty > 0) {
+    const cheapest = cheapestOf(allOpts);
+    const match = entries.find((e) => e.print.id === cheapest.id);
+    if (match) match.qty += cheapestQty;
+    else entries.push({ print: cheapest, qty: cheapestQty });
+  }
+  return entries.filter((e) => e.qty > 0);
+}
+
+function isValidSplit(cells, expectedLength, qty) {
+  return (
+    Array.isArray(cells) &&
+    cells.length === expectedLength &&
+    cells.every((n) => Number.isInteger(n) && n >= 0) &&
+    cells.reduce((a, b) => a + b, 0) === qty
+  );
 }
 
 export default function App() {
@@ -185,6 +219,9 @@ export default function App() {
   const [warningsDisabledForever, setWarningsDisabledForever] = useState(
     () => typeof window !== "undefined" && window.localStorage.getItem(WARNINGS_DISABLED_STORAGE_KEY) === "1"
   );
+  // name -> [countForSelectedPrint0, countForSelectedPrint1, ..., countForCheapest]
+  const [customSplits, setCustomSplits] = useState({});
+  const [advancedSplitOpen, setAdvancedSplitOpen] = useState({}); // name -> bool
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -247,10 +284,25 @@ export default function App() {
       next[name] = set;
       return next;
     });
+    // A custom split's cell count is tied to how many prints were selected
+    // when it was made — any change to the selection invalidates it rather
+    // than leaving a stale split silently mismatched to the new count.
+    setCustomSplits((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
 
   const clearSelection = (name) => {
     setSelections((prev) => ({ ...prev, [name]: new Set() }));
+    setCustomSplits((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
 
   const goNext = () => {
@@ -340,18 +392,14 @@ export default function App() {
         lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (minPrice(p) || 0) * qty;
       } else {
-        // Distributes the card's original qty across every selected print
-        // instead of "one of each" — picking 2 arts for a card that needs 5
-        // copies gets 1 each plus 3 duplicates piled onto the cheaper one,
-        // not 2 total. See allocateQty().
         const selectedPrints = sel.map((id) => opts.find((o) => o.id === id)).filter(Boolean);
-        const counts = allocateQty(qty, selectedPrints);
-        selectedPrints.forEach((p, i) => {
-          const count = counts[i];
-          if (count > 0) {
-            lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
-            total += (minPrice(p) || 0) * count;
-          }
+        const customCells = customSplits[name];
+        const entries = isValidSplit(customCells, selectedPrints.length + 1, qty)
+          ? customAllocation(customCells, selectedPrints, opts)
+          : defaultAllocation(qty, selectedPrints, opts);
+        entries.forEach(({ print: p, qty: count }) => {
+          lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+          total += (minPrice(p) || 0) * count;
         });
       }
     }
@@ -371,6 +419,8 @@ export default function App() {
     setZoomed(null);
     setOutputTab("search");
     setDoneChecks({});
+    setCustomSplits({});
+    setAdvancedSplitOpen({});
   };
 
   const toggleWarningsForever = () => {
@@ -564,6 +614,11 @@ export default function App() {
             />
             Disable warnings and heads-up notes like this (remembered on this device)
           </label>
+          <p style={{ color: SUBTEXT, fontSize: 11, lineHeight: 1.5, margin: "5px 0 0 21px", maxWidth: 480 }}>
+            This doesn't change how picks are resolved — selecting fewer printings than a card's quantity still
+            gets 1 of each plus the rest as the cheapest available printing automatically. It just stops telling
+            you when that happens.
+          </p>
 
           <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 24 }}>
             Card data and images via{" "}
@@ -612,14 +667,17 @@ export default function App() {
             .map((id) => opts.find((o) => o.id === id))
             .filter(Boolean)
         : null;
-    const cheapestSelected =
-      selectedPrints && selectedPrints.length
-        ? selectedPrints.reduce((best, p) => {
-            const p1 = minPrice(p);
-            const p2 = minPrice(best);
-            return p1 != null && (p2 == null || p1 < p2) ? p : best;
-          }, selectedPrints[0])
-        : null;
+    const cheapestOverall = selectedPrints ? cheapestOf(opts) : null;
+    const splitEditable = selectedPrints && selectedPrints.length < qty; // nothing to distribute otherwise
+    const activeCustomCells =
+      splitEditable && isValidSplit(customSplits[name], selectedPrints.length + 1, qty) ? customSplits[name] : null;
+    const splitCells = splitEditable ? activeCustomCells || defaultSplitCells(qty, selectedPrints) : null;
+    const updateSplitCell = (index, rawValue) => {
+      const base = customSplits[name] || defaultSplitCells(qty, selectedPrints);
+      const next = [...base];
+      next[index] = Math.max(0, parseInt(rawValue, 10) || 0);
+      setCustomSplits((prev) => ({ ...prev, [name]: next }));
+    };
 
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
@@ -658,11 +716,75 @@ export default function App() {
               : sel.size < qty
               ? `${sel.size} printings selected — you'll get 1 of each, plus ${qty - sel.size} more cop${
                   qty - sel.size === 1 ? "y" : "ies"
-                } of the cheaper one (${cheapestSelected.set} #${cheapestSelected.cn}), to reach ${qty} total.`
+                } of the cheapest available printing (${cheapestOverall.set} #${cheapestOverall.cn}), to reach ${qty} total.`
               : `${sel.size} printings selected — only the first ${qty} you picked (in the order you picked them) will be used${
                   warningsDisabledForever ? "" : `; the rest won't appear since you don't need that many`
                 }.`}
           </p>
+
+          {splitEditable && (
+            <div style={{ margin: "-12px 0 22px" }}>
+              <button
+                onClick={() => setAdvancedSplitOpen((prev) => ({ ...prev, [name]: !prev[name] }))}
+                className="mono"
+                style={{ background: "transparent", border: "none", color: TEAL, fontSize: 12, padding: 0, cursor: "pointer" }}
+              >
+                {advancedSplitOpen[name] ? "▾ Hide custom split" : "▸ Customize this split"}
+              </button>
+              {advancedSplitOpen[name] && (
+                <div style={{ marginTop: 10, padding: 14, background: PANEL_BG, border: "1px solid #2a323d", borderRadius: 8, maxWidth: 420 }}>
+                  {selectedPrints.map((p, i) => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                      <span className="mono" style={{ fontSize: 12, color: SUBTEXT }}>
+                        {p.set} #{p.cn}
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={splitCells[i]}
+                        onChange={(e) => updateSplitCell(i, e.target.value)}
+                        className="mono"
+                        style={{ width: 56, background: ROOT_BG, border: "1px solid #2a323d", borderRadius: 5, color: TEXT, padding: "5px 8px", fontSize: 12.5 }}
+                      />
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12 }}>
+                    <span className="mono" style={{ fontSize: 12, color: SUBTEXT }}>
+                      Cheapest available ({cheapestOverall.set} #{cheapestOverall.cn})
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={splitCells[splitCells.length - 1]}
+                      onChange={(e) => updateSplitCell(splitCells.length - 1, e.target.value)}
+                      className="mono"
+                      style={{ width: 56, background: ROOT_BG, border: "1px solid #2a323d", borderRadius: 5, color: TEXT, padding: "5px 8px", fontSize: 12.5 }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span className="mono" style={{ fontSize: 11.5, color: splitCells.reduce((a, b) => a + b, 0) === qty ? TEAL : ACCENT }}>
+                      Total: {splitCells.reduce((a, b) => a + b, 0)} / {qty}
+                    </span>
+                    {activeCustomCells && (
+                      <button
+                        onClick={() =>
+                          setCustomSplits((prev) => {
+                            const next = { ...prev };
+                            delete next[name];
+                            return next;
+                          })
+                        }
+                        className="inter"
+                        style={{ background: "transparent", border: "none", color: SUBTEXT, fontSize: 11.5, cursor: "pointer", textDecoration: "underline" }}
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {opts.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: SUBTEXT, border: "1px dashed #2a323d", borderRadius: 8 }}>
