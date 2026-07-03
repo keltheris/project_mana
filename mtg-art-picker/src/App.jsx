@@ -144,6 +144,7 @@ export default function App() {
   const [zoomed, setZoomed] = useState(null);
   const [outputTab, setOutputTab] = useState("search"); // search | massentry
   const [doneChecks, setDoneChecks] = useState({}); // key -> true, for the direct-links checklist
+  const [showImportHelp, setShowImportHelp] = useState(false);
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -470,6 +471,34 @@ export default function App() {
               Use sample list
             </button>
           </div>
+
+          <button
+            onClick={() => setShowImportHelp((v) => !v)}
+            className="mono"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              background: "transparent",
+              border: "none",
+              color: TEAL,
+              fontSize: 12,
+              padding: 0,
+              marginTop: 22,
+              cursor: "pointer",
+            }}
+          >
+            <ChevronDown size={13} style={{ transform: showImportHelp ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+            Importing a TCGplayer precon deck?
+          </button>
+          {showImportHelp && (
+            <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 8, maxWidth: 560 }}>
+              On the precon's TCGplayer page, look for <strong style={{ color: TEXT }}>Export → Decklist (.txt)</strong>,
+              open the file it downloads, and paste the contents straight into the box above — it's already in the
+              exact <span className="mono">qty card name</span> format this tool expects.
+            </p>
+          )}
+
           <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 36 }}>
             Card data and images via{" "}
             <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
