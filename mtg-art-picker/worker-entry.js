@@ -17,16 +17,21 @@ const FEEDBACK_REPO = "keltheris/project_mana";
 const FEEDBACK_TYPE_LABELS = { bug: "Bug", feature: "Feature idea", other: "Feedback" };
 const FEEDBACK_MAX_LENGTH = 3000;
 const FEEDBACK_RATE_LIMIT = 5; // submissions per IP per hour
+const PRINTS_RATE_LIMIT = 400; // lookups per IP per 10 minutes — generous enough for a couple of large decks pasted back to back
+const PRINTS_MAX_NAME_LENGTH = 200; // no real card name is anywhere close to this
 
-// Reuses the MANIFEST_KV binding as a lightweight per-IP counter — this
-// endpoint is public, so without it a single caller could spam issues onto
-// the repo directly via curl, bypassing the in-app form entirely.
-async function checkFeedbackRateLimit(env, ip) {
-  const key = `feedback:rl:${ip}`;
+// Reuses the MANIFEST_KV binding as a lightweight per-IP counter. Both
+// endpoints below are public and unauthenticated, so without this a single
+// caller could script arbitrarily many requests directly (bypassing the
+// in-app form/decklist entirely): spamming GitHub issues via /api/feedback,
+// or hammering Scryfall's live-fallback search via /api/prints on every
+// cache miss.
+async function checkRateLimit(env, bucket, ip, limit, windowSeconds) {
+  const key = `${bucket}:rl:${ip}`;
   const current = await env.MANIFEST_KV.get(key);
   const count = current ? parseInt(current, 10) : 0;
-  if (count >= FEEDBACK_RATE_LIMIT) return false;
-  await env.MANIFEST_KV.put(key, String(count + 1), { expirationTtl: 3600 });
+  if (count >= limit) return false;
+  await env.MANIFEST_KV.put(key, String(count + 1), { expirationTtl: windowSeconds });
   return true;
 }
 
@@ -53,7 +58,7 @@ async function handleFeedback(request, env) {
   const stage = typeof body.stage === "string" ? body.stage.slice(0, 40) : "unknown";
 
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (!(await checkFeedbackRateLimit(env, ip))) {
+  if (!(await checkRateLimit(env, "feedback", ip, FEEDBACK_RATE_LIMIT, 3600))) {
     return jsonResponse({ error: "Too many submissions — try again later" }, { status: 429 });
   }
 
@@ -100,6 +105,14 @@ export default {
       const name = url.searchParams.get("name");
       if (!name) {
         return jsonResponse({ error: "missing name" }, { status: 400 });
+      }
+      if (name.length > PRINTS_MAX_NAME_LENGTH) {
+        return jsonResponse({ error: "name too long" }, { status: 400 });
+      }
+
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      if (!(await checkRateLimit(env, "prints", ip, PRINTS_RATE_LIMIT, 600))) {
+        return jsonResponse({ error: "Too many requests — slow down and try again shortly" }, { status: 429 });
       }
 
       const key = normalizeName(name);

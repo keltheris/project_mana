@@ -20,15 +20,26 @@ const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Dark Confidant
 1 Grave Titan`;
 
+// Bounds on what a pasted decklist can contain — not just tidiness, but a
+// cap on how much downstream work one paste can trigger: each entry fires
+// its own /api/prints request in handleCompile, and an unbounded paste (or
+// one absurd "quantity") turns into unbounded outbound calls, some of which
+// fall through to a live Scryfall lookup on a cache miss.
+const MAX_RAW_TEXT_LENGTH = 20000;
+const MAX_ENTRIES = 500;
+const MAX_QTY = 999;
+const MAX_NAME_LENGTH = 200; // no real card name is anywhere close to this
+
 function parseList(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const map = new Map();
   for (const line of lines) {
     const m = line.match(/^(\d+)\s+(.+)$/);
     if (!m) continue;
-    const qty = parseInt(m[1], 10);
-    const name = m[2].trim();
-    map.set(name, (map.get(name) || 0) + qty);
+    const qty = Math.min(parseInt(m[1], 10), MAX_QTY);
+    const name = m[2].trim().slice(0, MAX_NAME_LENGTH);
+    if (!name) continue;
+    map.set(name, Math.min((map.get(name) || 0) + qty, MAX_QTY));
   }
   return Array.from(map.entries()).map(([name, qty]) => ({ name, qty }));
 }
@@ -65,8 +76,25 @@ function isMassEntryRisky(o) {
   return !!(o.promo || o.treatment || o.set === "SLD" || !o.tcgplayerId);
 }
 
+// Nobody picking a deck's art cares which printing of a basic land they get,
+// and defaulting to "cheapest" here just means a random, possibly ugly, art
+// gets silently baked into the export. Leaving these unresolved and passing
+// the plain qty/name straight through — same as what the player typed — is
+// more useful than a specific printing they never asked for.
+const BASIC_LAND_NAMES = new Set(
+  ["Plains", "Island", "Swamp", "Mountain", "Forest", "Wastes"].flatMap((n) => [
+    n.toLowerCase(),
+    `snow-covered ${n.toLowerCase()}`,
+  ])
+);
+function isBasicLand(name) {
+  return BASIC_LAND_NAMES.has(name.trim().toLowerCase());
+}
+
 function massEntryLine(l) {
-  return l.missing ? `${l.qty} ${l.name}   [NOT FOUND — verify manually]` : `${l.qty} ${l.name} [${l.set}] ${l.cn}`;
+  if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
+  if (l.basic) return `${l.qty} ${l.name}`;
+  return `${l.qty} ${l.name} [${l.set}] ${l.cn}`;
 }
 
 // Unlike the Mass Entry syntax, this doesn't need to exactly match a
@@ -75,6 +103,7 @@ function massEntryLine(l) {
 // promos, special treatments) that Mass Entry's strict matching rejects.
 function searchableLine(l) {
   if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
+  if (l.basic) return `${l.qty} ${l.name}`;
   const treatment = l.treatment ? ` · ${l.treatment}` : "";
   return `${l.qty} ${l.name} — ${l.setName} (${l.set}) #${l.cn}${treatment}`;
 }
@@ -132,9 +161,17 @@ export default function App() {
   }, [zoomed]);
 
   const handleCompile = useCallback(async () => {
+    if (rawText.length > MAX_RAW_TEXT_LENGTH) {
+      setError(`That list is too long (max ${MAX_RAW_TEXT_LENGTH.toLocaleString()} characters) — try splitting it into smaller batches.`);
+      return;
+    }
     const parsed = parseList(rawText);
     if (parsed.length === 0) {
       setError('No cards found. Use one card per line, formatted like "1 Card Name".');
+      return;
+    }
+    if (parsed.length > MAX_ENTRIES) {
+      setError(`That's ${parsed.length} distinct cards — max is ${MAX_ENTRIES} per list. Try splitting it into smaller batches.`);
       return;
     }
     setError(null);
@@ -250,7 +287,9 @@ export default function App() {
         unresolved++;
         continue;
       }
-      if (sel.length === 0) {
+      if (sel.length === 0 && isBasicLand(name)) {
+        lines.push({ qty, name, set: null, cn: null, price: null, basic: true });
+      } else if (sel.length === 0) {
         const p = cheapestOf(opts);
         lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
         total += (minPrice(p) || 0) * qty;
@@ -1091,7 +1130,7 @@ export default function App() {
                     }}
                   >
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {l.qty} {l.name} {l.missing ? "" : `[${l.set}] ${l.cn}`}
+                      {l.qty} {l.name} {l.missing || l.basic ? "" : `[${l.set}] ${l.cn}`}
                     </span>
                     {l.tcgplayerId ? (
                       <a
@@ -1102,6 +1141,10 @@ export default function App() {
                       >
                         TCGplayer <ExternalLink size={11} />
                       </a>
+                    ) : l.basic ? (
+                      <span title="Basic land — any printing works, so this was left unresolved on purpose" style={{ flexShrink: 0, fontSize: 11 }}>
+                        any printing
+                      </span>
                     ) : (
                       <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
                         no link found
