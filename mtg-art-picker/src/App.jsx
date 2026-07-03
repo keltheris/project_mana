@@ -493,7 +493,7 @@ export default function App() {
           </button>
           {showImportHelp && (
             <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 8, maxWidth: 560 }}>
-              On the precon's TCGplayer page, look for <strong style={{ color: TEXT }}>Export → Decklist (.txt)</strong>,
+              On the precon's TCGplayer page, look for <strong style={{ color: TEXT }}>Export → Download Deck Text File</strong>,
               open the file it downloads, and paste the contents straight into the box above — it's already in the
               exact <span className="mono">qty card name</span> format this tool expects.
             </p>
