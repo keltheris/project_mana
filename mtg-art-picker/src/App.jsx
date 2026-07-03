@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home, XCircle } from "lucide-react";
 import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
 import FeedbackWidget from "./FeedbackWidget";
 
@@ -222,6 +222,7 @@ export default function App() {
   // name -> [countForSelectedPrint0, countForSelectedPrint1, ..., countForCheapest]
   const [customSplits, setCustomSplits] = useState({});
   const [advancedSplitOpen, setAdvancedSplitOpen] = useState({}); // name -> bool
+  const [droppedCards, setDroppedCards] = useState(new Set()); // card names excluded entirely from the output
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -293,6 +294,14 @@ export default function App() {
       delete next[name];
       return next;
     });
+    // Picking a printing is a clear signal the card should be included
+    // after all, if it had been dropped.
+    setDroppedCards((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
   };
 
   const clearSelection = (name) => {
@@ -318,6 +327,19 @@ export default function App() {
       setReviewIndex((i) => i - 1);
       setVisibleCount(24);
     }
+  };
+
+  const dropCard = (name) => {
+    setDroppedCards((prev) => new Set(prev).add(name));
+    goNext();
+  };
+
+  const undropCard = (name) => {
+    setDroppedCards((prev) => {
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
   };
 
   // Shared by the review grid's render and the keyboard handler below, so
@@ -374,6 +396,7 @@ export default function App() {
     let total = 0;
     let unresolved = 0;
     for (const { name, qty } of entries) {
+      if (droppedCards.has(name)) continue;
       const opts = printOptions[name] || [];
       const sel = selections[name] ? Array.from(selections[name]) : [];
       if (opts.length === 0) {
@@ -421,6 +444,7 @@ export default function App() {
     setDoneChecks({});
     setCustomSplits({});
     setAdvancedSplitOpen({});
+    setDroppedCards(new Set());
   };
 
   const toggleWarningsForever = () => {
@@ -678,6 +702,7 @@ export default function App() {
       next[index] = Math.max(0, parseInt(rawValue, 10) || 0);
       setCustomSplits((prev) => ({ ...prev, [name]: next }));
     };
+    const isDropped = droppedCards.has(name);
 
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
@@ -687,14 +712,16 @@ export default function App() {
         <div style={{ maxWidth: 920, margin: "0 auto" }}>
           {/* progress rule */}
           <div style={{ display: "flex", gap: 3, marginBottom: 22 }}>
-            {entries.map((_, i) => (
+            {entries.map((e, i) => (
               <div
                 key={i}
+                title={droppedCards.has(e.name) ? `${e.name} — dropped` : undefined}
                 style={{
                   flex: 1,
                   height: 3,
                   borderRadius: 2,
-                  background: i < reviewIndex ? TEAL : i === reviewIndex ? ACCENT : "#2a323d",
+                  background:
+                    i === reviewIndex ? ACCENT : droppedCards.has(e.name) ? "#5c3a3a" : i < reviewIndex ? TEAL : "#2a323d",
                 }}
               />
             ))}
@@ -704,6 +731,43 @@ export default function App() {
             CARD {reviewIndex + 1} OF {entries.length} · QTY {qty}
           </div>
           <h2 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 4px" }}>{name}</h2>
+
+          {isDropped && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "10px 14px",
+                background: "rgba(178,58,72,0.1)",
+                border: "1px solid rgba(178,58,72,0.3)",
+                borderRadius: 8,
+                marginBottom: 16,
+              }}
+            >
+              <span style={{ fontSize: 13, color: SUBTEXT }}>
+                <strong style={{ color: TEXT }}>Dropped</strong> — this card won't be in your final list.
+              </span>
+              <button
+                onClick={() => undropCard(name)}
+                className="inter"
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${TEAL}`,
+                  color: TEAL,
+                  borderRadius: 6,
+                  padding: "6px 12px",
+                  fontSize: 12.5,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                Include it after all
+              </button>
+            </div>
+          )}
+
           <p style={{ color: SUBTEXT, fontSize: 13.5, margin: "0 0 22px" }}>
             {opts.length === 0
               ? "No printings found on Scryfall — check the spelling, or skip and it'll pass through unresolved."
@@ -1030,6 +1094,27 @@ export default function App() {
             </button>
 
             <div style={{ display: "flex", gap: 10 }}>
+              {!isDropped && (
+                <button
+                  onClick={() => dropCard(name)}
+                  title="Don't include this card in the final list"
+                  className="inter"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "transparent",
+                    color: SUBTEXT,
+                    border: "1px solid #2a323d",
+                    borderRadius: 6,
+                    padding: "10px 16px",
+                    fontSize: 13.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  <XCircle size={14} /> Drop this card
+                </button>
+              )}
               {sel.size > 0 && (
                 <button
                   onClick={() => clearSelection(name)}
@@ -1218,6 +1303,9 @@ export default function App() {
             </span>
             {unresolved > 0 && (
               <span style={{ color: ACCENT }}> · {unresolved} card{unresolved === 1 ? "" : "s"} not found</span>
+            )}
+            {droppedCards.size > 0 && (
+              <span> · {droppedCards.size} dropped</span>
             )}
           </p>
           <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 22px" }}>
