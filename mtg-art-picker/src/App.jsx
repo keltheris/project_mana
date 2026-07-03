@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home } from "lucide-react";
 import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
 import FeedbackWidget from "./FeedbackWidget";
 
@@ -143,6 +143,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [zoomed, setZoomed] = useState(null);
   const [outputTab, setOutputTab] = useState("search"); // search | massentry
+  const [doneChecks, setDoneChecks] = useState({}); // key -> true, for the direct-links checklist
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -283,25 +284,25 @@ export default function App() {
       const opts = printOptions[name] || [];
       const sel = selections[name] ? Array.from(selections[name]) : [];
       if (opts.length === 0) {
-        lines.push({ qty, name, set: null, cn: null, price: null, missing: true });
+        lines.push({ qty, name, set: null, cn: null, price: null, missing: true, key: `${name}::missing` });
         unresolved++;
         continue;
       }
       if (sel.length === 0 && isBasicLand(name)) {
-        lines.push({ qty, name, set: null, cn: null, price: null, basic: true });
+        lines.push({ qty, name, set: null, cn: null, price: null, basic: true, key: `${name}::basic` });
       } else if (sel.length === 0) {
         const p = cheapestOf(opts);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (minPrice(p) || 0) * qty;
       } else {
         sel.forEach((id) => {
           const p = opts.find((o) => o.id === id);
           if (p) {
-            lines.push({ qty: 1, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p) });
+            lines.push({ qty: 1, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
             total += minPrice(p) || 0;
           }
         });
@@ -322,6 +323,7 @@ export default function App() {
     setCopied(false);
     setZoomed(null);
     setOutputTab("search");
+    setDoneChecks({});
   };
 
   const fontImport = (
@@ -746,16 +748,22 @@ export default function App() {
                   className="inter"
                   style={{
                     marginTop: 16,
-                    background: "transparent",
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    background: "rgba(60,140,150,0.12)",
                     color: TEAL,
-                    border: "1px solid #2a323d",
-                    borderRadius: 6,
-                    padding: "8px 16px",
-                    fontSize: 13,
+                    border: `1px solid ${TEAL}`,
+                    borderRadius: 8,
+                    padding: "13px 16px",
+                    fontSize: 14,
+                    fontWeight: 600,
                     cursor: "pointer",
                   }}
                 >
-                  Show more printings ({opts.length - visibleCount} remaining)
+                  <ChevronDown size={16} /> Show more printings ({opts.length - visibleCount} remaining)
                 </button>
               )}
             </>
@@ -960,7 +968,7 @@ export default function App() {
         {feedbackWidget}
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
-            SELECTION COMPLETE{betaPill}
+            PROJECT MANA · EVERY PRINTING, YOUR PICK{betaPill}
           </div>
           <h1 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px" }}>Your finished list</h1>
           <p style={{ color: SUBTEXT, fontSize: 14.5, margin: "0 0 10px" }}>
@@ -1113,45 +1121,96 @@ export default function App() {
                 One link per card, straight to the exact printing you picked — always correct, since it's a real
                 product page rather than a text match.
               </p>
-              <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
-                {lines.map((l, i) => (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
+                <div
+                  className="mono"
+                  style={{
+                    position: "relative",
+                    background: ACCENT,
+                    color: "#fff",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: "0.03em",
+                    padding: "5px 10px",
+                    borderRadius: 5,
+                    marginRight: 26,
+                  }}
+                >
+                  CHECK 'EM OFF AS YOU GO
                   <div
-                    key={i}
-                    className="mono"
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "9px 12px",
-                      fontSize: 12.5,
-                      borderTop: i === 0 ? "none" : "1px solid #2a323d",
-                      color: SUBTEXT,
+                      position: "absolute",
+                      bottom: -5,
+                      right: 16,
+                      width: 0,
+                      height: 0,
+                      borderLeft: "5px solid transparent",
+                      borderRight: "5px solid transparent",
+                      borderTop: `5px solid ${ACCENT}`,
                     }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {l.qty} {l.name} {l.missing || l.basic ? "" : `[${l.set}] ${l.cn}`}
-                    </span>
-                    {l.tcgplayerId ? (
-                      <a
-                        href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                  />
+                </div>
+              </div>
+              <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
+                {lines.map((l, i) => {
+                  const done = !!doneChecks[l.key];
+                  return (
+                    <div
+                      key={l.key}
+                      className="mono"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "9px 12px",
+                        fontSize: 12.5,
+                        borderTop: i === 0 ? "none" : "1px solid #2a323d",
+                        color: SUBTEXT,
+                        opacity: done ? 0.45 : 1,
+                        transition: "opacity 0.15s",
+                      }}
+                    >
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          textDecoration: done ? "line-through" : "none",
+                        }}
                       >
-                        TCGplayer <ExternalLink size={11} />
-                      </a>
-                    ) : l.basic ? (
-                      <span title="Basic land — any printing works, so this was left unresolved on purpose" style={{ flexShrink: 0, fontSize: 11 }}>
-                        any printing
+                        {l.qty} {l.name} {l.missing || l.basic ? "" : `[${l.set}] ${l.cn}`}
                       </span>
-                    ) : (
-                      <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
-                        no link found
+                      <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                        {l.tcgplayerId ? (
+                          <a
+                            href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                          >
+                            TCGplayer <ExternalLink size={11} />
+                          </a>
+                        ) : l.basic ? (
+                          <span title="Basic land — any printing works, so this was left unresolved on purpose" style={{ flexShrink: 0, fontSize: 11 }}>
+                            any printing
+                          </span>
+                        ) : (
+                          <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
+                            no link found
+                          </span>
+                        )}
+                        <input
+                          type="checkbox"
+                          checked={done}
+                          onChange={() => setDoneChecks((prev) => ({ ...prev, [l.key]: !prev[l.key] }))}
+                          title="Mark done"
+                          style={{ width: 15, height: 15, accentColor: ACCENT, cursor: "pointer", flexShrink: 0 }}
+                        />
                       </span>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
