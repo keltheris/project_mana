@@ -131,15 +131,30 @@ function buildMassEntryPrefillUrl(lines) {
 // can check the same flag rather than each growing its own toggle.
 const WARNINGS_DISABLED_STORAGE_KEY = "pm_disable_warnings";
 
-// Even as possible, remainder going to the earliest-selected prints (Array
-// .from(Set) preserves insertion order, i.e. selection order): splitQty(5, 2)
-// => [3, 2]. If more prints are selected than copies are needed, the excess
-// get 0 — they simply won't appear in the output, rather than forcing a
+// Each selected print gets 1 copy baseline; any extra copies needed to
+// reach the card's original qty all pile onto whichever selected print is
+// cheapest (ties go to the earliest-selected — Array.from(Set) preserves
+// selection order), rather than being spread evenly across prints the user
+// deliberately picked. allocateQty(5, [$3, $5]) => [4, 1]. If more prints
+// are selected than the qty allows, only the first `qty` (selection order)
+// get a copy; the rest get 0 and simply don't appear, rather than forcing a
 // per-print quantity picker into the UI.
-function splitQty(qty, count) {
-  const base = Math.floor(qty / count);
-  const remainder = qty % count;
-  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
+function allocateQty(qty, prints) {
+  if (prints.length >= qty) {
+    return prints.map((_, i) => (i < qty ? 1 : 0));
+  }
+  const counts = prints.map(() => 1);
+  let cheapestIndex = 0;
+  let cheapestPrice = minPrice(prints[0]);
+  for (let i = 1; i < prints.length; i++) {
+    const p = minPrice(prints[i]);
+    if (p != null && (cheapestPrice == null || p < cheapestPrice)) {
+      cheapestPrice = p;
+      cheapestIndex = i;
+    }
+  }
+  counts[cheapestIndex] += qty - prints.length;
+  return counts;
 }
 
 function cheapestOf(opts) {
@@ -325,16 +340,17 @@ export default function App() {
         lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (minPrice(p) || 0) * qty;
       } else {
-        // Splits the card's original qty across every selected print instead
-        // of "one of each" — picking 2 arts for a card that needs 5 copies
-        // gets a 3/2 split, not 2 total. See splitQty().
-        const splits = splitQty(qty, sel.length);
-        sel.forEach((id, i) => {
-          const p = opts.find((o) => o.id === id);
-          const splitCount = splits[i];
-          if (p && splitCount > 0) {
-            lines.push({ qty: splitCount, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
-            total += (minPrice(p) || 0) * splitCount;
+        // Distributes the card's original qty across every selected print
+        // instead of "one of each" — picking 2 arts for a card that needs 5
+        // copies gets 1 each plus 3 duplicates piled onto the cheaper one,
+        // not 2 total. See allocateQty().
+        const selectedPrints = sel.map((id) => opts.find((o) => o.id === id)).filter(Boolean);
+        const counts = allocateQty(qty, selectedPrints);
+        selectedPrints.forEach((p, i) => {
+          const count = counts[i];
+          if (count > 0) {
+            lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+            total += (minPrice(p) || 0) * count;
           }
         });
       }
@@ -590,7 +606,20 @@ export default function App() {
     const sortedOpts = sortedOptsFor(name);
     const shown = sortedOpts.slice(0, visibleCount);
     const firstRiskyIndex = shown.findIndex((o) => isMassEntryRisky(o));
-    const splitDist = sel.size > 1 ? splitQty(qty, sel.size) : null;
+    const selectedPrints =
+      sel.size > 1
+        ? Array.from(sel)
+            .map((id) => opts.find((o) => o.id === id))
+            .filter(Boolean)
+        : null;
+    const cheapestSelected =
+      selectedPrints && selectedPrints.length
+        ? selectedPrints.reduce((best, p) => {
+            const p1 = minPrice(p);
+            const p2 = minPrice(best);
+            return p1 != null && (p2 == null || p1 < p2) ? p : best;
+          }, selectedPrints[0])
+        : null;
 
     return (
       <div className="inter" style={{ minHeight: "100vh", background: ROOT_BG, color: TEXT, padding: "28px 20px 60px" }}>
@@ -624,12 +653,14 @@ export default function App() {
               ? "No selection yet — the cheapest printing will be used automatically."
               : sel.size === 1
               ? `1 printing selected — you'll get ${qty} cop${qty === 1 ? "y" : "ies"} of it.`
-              : `${sel.size} printings selected — the ${qty} cop${qty === 1 ? "y" : "ies"} you need split ${splitDist
-                  .filter((n) => n > 0)
-                  .join(" / ")} across them${
-                  splitDist.some((n) => n === 0) && !warningsDisabledForever
-                    ? ` (you selected more than ${qty}, so the extra pick${splitDist.filter((n) => n === 0).length === 1 ? "" : "s"} won't appear)`
-                    : ""
+              : sel.size === qty
+              ? `${sel.size} printings selected — you'll get 1 of each.`
+              : sel.size < qty
+              ? `${sel.size} printings selected — you'll get 1 of each, plus ${qty - sel.size} more cop${
+                  qty - sel.size === 1 ? "y" : "ies"
+                } of the cheaper one (${cheapestSelected.set} #${cheapestSelected.cn}), to reach ${qty} total.`
+              : `${sel.size} printings selected — only the first ${qty} you picked (in the order you picked them) will be used${
+                  warningsDisabledForever ? "" : `; the rest won't appear since you don't need that many`
                 }.`}
           </p>
 
