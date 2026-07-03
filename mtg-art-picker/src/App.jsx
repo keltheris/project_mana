@@ -127,6 +127,8 @@ function buildMassEntryPrefillUrl(lines) {
   return url.length <= MASS_ENTRY_PREFILL_MAX_URL_LENGTH ? url : TCGPLAYER_MASS_ENTRY_URL;
 }
 
+const QTY_WARNING_STORAGE_KEY = "pm_disable_qty_warning";
+
 function cheapestOf(opts) {
   const priced = opts.filter((o) => minPrice(o) != null);
   const pool = priced.length ? priced : opts;
@@ -152,6 +154,12 @@ export default function App() {
   const [outputTab, setOutputTab] = useState("search"); // search | massentry
   const [doneChecks, setDoneChecks] = useState({}); // key -> true, for the direct-links checklist
   const [showImportHelp, setShowImportHelp] = useState(false);
+  const [qtyWarningDismissedForList, setQtyWarningDismissedForList] = useState(false); // resets on Start Over
+  const [qtyWarningDisabledForever, setQtyWarningDisabledForever] = useState(
+    () => typeof window !== "undefined" && window.localStorage.getItem(QTY_WARNING_STORAGE_KEY) === "1"
+  );
+  const [pendingQtyWarning, setPendingQtyWarning] = useState(false);
+  const [dismissQtyWarningChecked, setDismissQtyWarningChecked] = useState(false);
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -235,6 +243,26 @@ export default function App() {
     }
   };
 
+  // Picking more than one printing means "one of each," ignoring the
+  // original qty (see buildOutput) — selecting 2 arts for a card that needs
+  // 4 copies quietly ends up with 2, not 4. Worth a nudge before it's easy
+  // to miss on the confirmation screen.
+  const currentQtyMismatch = () => {
+    const { name, qty } = entries[reviewIndex] || {};
+    if (!name) return false;
+    const sel = selections[name] || new Set();
+    return qty > 1 && sel.size > 1 && sel.size < qty;
+  };
+
+  const attemptAdvance = () => {
+    if (currentQtyMismatch() && !qtyWarningDismissedForList && !qtyWarningDisabledForever) {
+      setDismissQtyWarningChecked(false);
+      setPendingQtyWarning(true);
+      return;
+    }
+    goNext();
+  };
+
   // Shared by the review grid's render and the keyboard handler below, so
   // arrow-key navigation inside the zoom view walks the same ordering the
   // grid displays instead of computing it a second, possibly different, way.
@@ -274,7 +302,7 @@ export default function App() {
 
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        goNext();
+        attemptAdvance();
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
         goPrev();
@@ -282,7 +310,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [zoomed, stage, reviewIndex, entries, printOptions]);
+  }, [zoomed, stage, reviewIndex, entries, printOptions, selections, qtyWarningDismissedForList, qtyWarningDisabledForever]);
 
   const buildOutput = () => {
     const lines = [];
@@ -332,6 +360,16 @@ export default function App() {
     setZoomed(null);
     setOutputTab("search");
     setDoneChecks({});
+    setQtyWarningDismissedForList(false);
+    setPendingQtyWarning(false);
+  };
+
+  const toggleQtyWarningForever = () => {
+    setQtyWarningDisabledForever((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(QTY_WARNING_STORAGE_KEY, next ? "1" : "0");
+      return next;
+    });
   };
 
   const fontImport = (
@@ -506,7 +544,19 @@ export default function App() {
             </p>
           )}
 
-          <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 36 }}>
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: SUBTEXT, marginTop: 22, cursor: "pointer" }}
+          >
+            <input
+              type="checkbox"
+              checked={qtyWarningDisabledForever}
+              onChange={toggleQtyWarningForever}
+              style={{ width: 13, height: 13, accentColor: ACCENT, cursor: "pointer" }}
+            />
+            Don't warn me when I pick fewer printings than a card's quantity (remembered on this device)
+          </label>
+
+          <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 24 }}>
             Card data and images via{" "}
             <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
               Scryfall
@@ -848,7 +898,7 @@ export default function App() {
                 </button>
               )}
               <button
-                onClick={goNext}
+                onClick={attemptAdvance}
                 className="inter"
                 style={{
                   display: "flex",
@@ -975,6 +1025,94 @@ export default function App() {
             <p className="mono" style={{ color: SUBTEXT, fontSize: 10.5, marginTop: 16, textAlign: "center" }}>
               ← → browse printings · Enter select · Esc close
             </p>
+          </div>
+        )}
+
+        {pendingQtyWarning && (
+          <div
+            onClick={() => setPendingQtyWarning(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(10,12,15,0.72)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20,
+              zIndex: 200,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="inter"
+              style={{
+                width: "100%",
+                maxWidth: 420,
+                background: PANEL_BG,
+                border: "1px solid #2a323d",
+                borderRadius: 10,
+                padding: 22,
+                boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c9a227", marginBottom: 10 }}>
+                <AlertTriangle size={17} />
+                <span className="fraunces" style={{ fontSize: 18, fontWeight: 700, color: TEXT }}>
+                  Fewer copies than the list needs
+                </span>
+              </div>
+              <p style={{ color: SUBTEXT, fontSize: 13.5, lineHeight: 1.6, margin: "0 0 16px" }}>
+                {sel.size} printings selected for <strong style={{ color: TEXT }}>{name}</strong>, but the list
+                needs {qty}. Multiple printings means one of each, not {qty} total — you'll end up with {sel.size},
+                not {qty}, unless you select {qty - sel.size} more.
+              </p>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: SUBTEXT, marginBottom: 18, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={dismissQtyWarningChecked}
+                  onChange={(e) => setDismissQtyWarningChecked(e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: ACCENT, cursor: "pointer" }}
+                />
+                Don't ask again for this list
+              </label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button
+                  onClick={() => setPendingQtyWarning(false)}
+                  className="inter"
+                  style={{
+                    background: "transparent",
+                    color: TEXT,
+                    border: "1px solid #2a323d",
+                    borderRadius: 6,
+                    padding: "9px 16px",
+                    fontSize: 13.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Go back and fix it
+                </button>
+                <button
+                  onClick={() => {
+                    if (dismissQtyWarningChecked) setQtyWarningDismissedForList(true);
+                    setPendingQtyWarning(false);
+                    goNext();
+                  }}
+                  className="inter"
+                  style={{
+                    background: ACCENT,
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "9px 16px",
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Continue anyway
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
