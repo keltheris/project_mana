@@ -1162,7 +1162,7 @@ export default function App() {
                     letterSpacing: "0.03em",
                     padding: "5px 10px",
                     borderRadius: 5,
-                    marginRight: 26,
+                    marginRight: 6,
                   }}
                 >
                   CHECK 'EM OFF AS YOU GO
@@ -1170,7 +1170,7 @@ export default function App() {
                     style={{
                       position: "absolute",
                       bottom: -5,
-                      right: 16,
+                      right: 13,
                       width: 0,
                       height: 0,
                       borderLeft: "5px solid transparent",
