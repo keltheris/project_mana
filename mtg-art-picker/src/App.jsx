@@ -988,6 +988,7 @@ export default function App() {
     const massEntryText = lines.map(massEntryLine).join("\n");
     const outputText = outputTab === "search" ? searchText : massEntryText;
     const massEntryPrefillUrl = buildMassEntryPrefillUrl(lines);
+    const hasRepeats = lines.some((l) => !l.missing && !l.basic && l.qty > 1);
 
     const copy = async () => {
       try {
@@ -1049,6 +1050,12 @@ export default function App() {
             ))}
           </div>
 
+          {outputTab === "search" && hasRepeats && (
+            <p className="mono" style={{ color: SUBTEXT, fontSize: 11, letterSpacing: "0.01em", margin: "0 0 8px" }}>
+              Needing more than one copy repeats that line below — that's expected, not a mistake.
+            </p>
+          )}
+
           <textarea
             readOnly
             value={outputText}
@@ -1073,9 +1080,7 @@ export default function App() {
               <>
                 Each line is written to paste into <span className="mono">TCGplayer's own search bar</span> — card
                 name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
-                special treatments) that Mass Entry's strict matching often gets wrong. Needing more than one copy
-                repeats the line rather than prefixing a count — TCGplayer's search can't handle a leading number,
-                so this keeps every line triple-click-clean to copy.
+                special treatments) that Mass Entry's strict matching often gets wrong.
               </>
             ) : (
               <>
