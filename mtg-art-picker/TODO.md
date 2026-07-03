@@ -44,6 +44,20 @@ manifest carries, then manually redeploying `worker/` and rebuilding the KV
 index (see `DEPLOY.md` step 2 / `worker/README.md`) — same category of
 change as the deferred "add release year to the Secret Lair display" idea.
 
+Confirmed which Scryfall card fields to pull in when this gets built —
+`oracle_text` cleanly excludes flavor text already, no filtering needed:
+- `oracle_text` — rules text only (abilities separated by `\n`), flavor
+  text lives in the separate `flavor_text` field and can just be ignored
+- `mana_cost` — e.g. `"{1}{U}{B}{R}"`
+- `power` / `toughness` — strings, creatures only
+- `type_line` — e.g. `"Legendary Creature — Human Wizard"`
+- `keywords` — array Scryfall already parses out, e.g. `["Flying"]`
+- `cmc` — converted mana cost as a number, useful for sorting/filtering
+- Double-faced/split cards: these fields can live under `card_faces[0]`/
+  `card_faces[1]` instead of top-level — same fallback pattern
+  `leanPrinting()` already uses for `image_uris` should apply here too
+  (`card.oracle_text ?? card.card_faces?.[0]?.oracle_text`).
+
 ## Save / share a finished list
 
 Needs a backend piece — a KV-backed short link (`/s/<id>` style), not just
