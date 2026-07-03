@@ -101,11 +101,18 @@ function massEntryLine(l) {
 // [SET] collector-number pair — it just needs to contain words TCGplayer's
 // own product search can find, so it holds up for prints (Secret Lair,
 // promos, special treatments) that Mass Entry's strict matching rejects.
-function searchableLine(l) {
-  if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
-  if (l.basic) return `${l.qty} ${l.name}`;
+// Resolved printings deliberately drop the qty prefix and repeat the line
+// once per copy instead: TCGplayer's search bar treats a leading digit as
+// part of the query and fails to match anything (confirmed — "2 Damnation…"
+// finds nothing, "Damnation…" does), and a <textarea>'s triple-click always
+// selects a full line, so keeping the count off the line entirely is the
+// only way to make "triple-click to copy" reliably grab just the search text.
+function searchableLines(l) {
+  if (l.missing) return [`${l.qty} ${l.name}   [NOT FOUND — verify manually]`];
+  if (l.basic) return [`${l.qty} ${l.name}`];
   const treatment = l.treatment ? ` · ${l.treatment}` : "";
-  return `${l.qty} ${l.name} — ${l.setName} (${l.set}) #${l.cn}${treatment}`;
+  const line = `${l.name} — ${l.setName} (${l.set}) #${l.cn}${treatment}`;
+  return Array(l.qty).fill(line);
 }
 
 const MASS_ENTRY_PREFILL_MAX_URL_LENGTH = 6000;
@@ -977,7 +984,7 @@ export default function App() {
   // ---------- DONE STAGE ----------
   if (stage === "done") {
     const { lines, total, unresolved } = buildOutput();
-    const searchText = lines.map(searchableLine).join("\n");
+    const searchText = lines.flatMap(searchableLines).join("\n");
     const massEntryText = lines.map(massEntryLine).join("\n");
     const outputText = outputTab === "search" ? searchText : massEntryText;
     const massEntryPrefillUrl = buildMassEntryPrefillUrl(lines);
@@ -1066,7 +1073,9 @@ export default function App() {
               <>
                 Each line is written to paste into <span className="mono">TCGplayer's own search bar</span> — card
                 name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
-                special treatments) that Mass Entry's strict matching often gets wrong.
+                special treatments) that Mass Entry's strict matching often gets wrong. Needing more than one copy
+                repeats the line rather than prefixing a count — TCGplayer's search can't handle a leading number,
+                so this keeps every line triple-click-clean to copy.
               </>
             ) : (
               <>
