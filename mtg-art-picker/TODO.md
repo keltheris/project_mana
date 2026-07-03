@@ -64,6 +64,69 @@ Needs a backend piece — a KV-backed short link (`/s/<id>` style), not just
 cramming the whole selection state into a URL query string. Reuse the
 `MANIFEST_KV` binding with a distinct key prefix, or a separate namespace.
 
+## Order-received checklist (exploratory — no direction chosen yet)
+
+Friend's feature request, relayed by the user: after buying cards through
+this tool, let them check items off as they physically arrive in the mail
+— useful because TCGplayer orders often ship from multiple sellers over
+1–3 weeks, so "did I get everything" is a real multi-week tracking problem,
+not a one-sitting task.
+
+**This is intentionally not scoped to a quick win.** The user wants to
+weigh the options for real before building, not just take the cheapest
+path. Revisit and actually decide before writing code.
+
+Worth noting up front: the UI half-exists already. The "mark done" checkbox
+list on the results page (`doneChecks` state, next to the direct TCGplayer
+links — see `App.jsx`) is functionally the same checklist. Today it only
+lives in React state, so it's gone on refresh/tab close. The open question
+is entirely about *persistence*, not the checklist UI itself.
+
+Options on the table, no favorite yet:
+
+- **localStorage.** Free, no backend, no new data-retention questions.
+  Works for the common case (checking off mail on the same laptop/phone
+  over a couple weeks). Breaks on clearing browser data, switching
+  devices/browsers, or private/incognito mode. Needs a stable key to
+  reconnect to the right checklist later — e.g. hashing the list's
+  contents — since there's no session/account concept in this app.
+- **URL-encoded state.** Cram the checked/unchecked bits into the URL
+  itself (15 items is a couple bytes even before encoding). Shareable and
+  bookmarkable without a backend. Every checkbox click has to rewrite the
+  URL (via `history.replaceState`), and it's really "whoever has this
+  exact link," not a synced account — closer to a snapshot than a
+  persistent record.
+- **Backend-persisted via a short link.** Same underlying infrastructure
+  as "Save / share a finished list" above — if that KV-backed `/s/<id>`
+  link gets built, the received-checklist state could just ride along as
+  more data on that same saved record. Durable, works across devices,
+  no separate system needed. Costs: needs that backend to exist first,
+  and it's a step up in data sensitivity (storing "here's what this
+  person bought and when they got it" server-side, even under an
+  unguessable link) versus everything else this app currently stores.
+- **Export/import a small file.** User downloads a tiny JSON/text
+  snapshot of their checklist, re-uploads it later or on another device.
+  Zero backend, zero server-side data retention, works cross-device in
+  principle — but puts the file-management burden on the user, which is
+  real friction for a casual tool.
+
+Open scoping questions, not just implementation ones:
+
+- Does this need to be tied to a finished decklist at all, or could it be
+  a standalone generic checklist utility (paste any list of line items,
+  get a persistent checklist)? The friend's original framing ("create an
+  interactable HTML page that has a checklist") reads more generic than
+  "a feature of the decklist flow."
+- If tied to a decklist: does the checklist track per-*line* (each
+  printing) or per-*card* (the original entry, e.g. one checkbox for "5
+  Island" rather than tracking each unit)? Probably per-line, matching
+  what's already shipped, but worth confirming against the actual friend
+  use case (do they think in terms of packages/products, or exact
+  quantities?).
+- Multi-seller reality: a TCGplayer order can arrive as several separate
+  packages. Does "received" need a partial-quantity concept (e.g. "3 of
+  the 5 Islands arrived") or is a binary checkbox enough?
+
 ## Priority set list
 
 Let the user specify a priority order of sets (e.g. "always show Secret
