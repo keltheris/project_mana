@@ -171,9 +171,21 @@ function buildMassEntryPrefillUrl(lines) {
 
 const MANAPOOL_ADD_DECK_URL = "https://manapool.com/add-deck";
 
+// Confirmed against real ManaPool links: accented letters transliterate to
+// their plain form (Lim-Dûl's Vault -> lim-duls-vault, not lim-d-l-s-vault),
+// and apostrophes vanish entirely rather than becoming a separator (Dûl's
+// -> duls, not dul-s). NFD-normalizing first splits accented letters into a
+// base letter plus a combining mark, which the second replace then strips,
+// leaving the plain ASCII base letter behind. Æ/Œ don't decompose under NFD
+// (they're standalone letters, not base+accent), so they're mapped by hand.
 function manaPoolSlug(name) {
   return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[æÆ]/g, "ae")
+    .replace(/[œŒ]/g, "oe")
     .toLowerCase()
+    .replace(/['’]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
