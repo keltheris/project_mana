@@ -127,6 +127,12 @@ function artTypeFilterPool(opts, artPriority, disabledForCard) {
   return matches.length ? matches : opts;
 }
 
+// Generates lines in TCGplayer's "qty name [SET] number" Mass Entry syntax.
+// Confirmed against ManaPool's own on-page format guide that their Mass
+// Entry box accepts the exact same shape (quantity, name, and an optional
+// [SET] or (SET) plus optional collector number) — it's a superset of what
+// TCGplayer requires, so this same generated text pastes cleanly into
+// either vendor's box without needing a second generator.
 function massEntryLine(l) {
   if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
   if (l.basic) return `${l.qty} ${l.name}`;
@@ -161,6 +167,26 @@ function buildMassEntryPrefillUrl(lines) {
   const c = lines.map((l) => `||${massEntryLine(l)}`).join("");
   const url = `${TCGPLAYER_MASS_ENTRY_URL}?productline=Magic&c=${encodeURIComponent(c)}`;
   return url.length <= MASS_ENTRY_PREFILL_MAX_URL_LENGTH ? url : TCGPLAYER_MASS_ENTRY_URL;
+}
+
+const MANAPOOL_ADD_DECK_URL = "https://manapool.com/add-deck";
+
+function manaPoolSlug(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Best-effort direct product link, built from the same set/collector-number
+// URL shape ManaPool's own card pages use (confirmed against real examples,
+// e.g. manapool.com/card/cmm/703/sol-ring) — there's no product-id field to
+// key off like TCGplayer's tcgplayer_id, so an unusual name (split cards,
+// accented characters) may occasionally produce a slug that 404s. The Mass
+// Entry paste box is the reliable fallback when that happens.
+function manaPoolUrl(l) {
+  if (l.missing || l.basic || !l.set || !l.cn) return null;
+  return `https://manapool.com/card/${l.set.toLowerCase()}/${l.cn}/${manaPoolSlug(l.name)}`;
 }
 
 // Generic, not qty-specific, so any future heads-up/caution note in the app
@@ -249,7 +275,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [zoomed, setZoomed] = useState(null);
-  const [outputTab, setOutputTab] = useState("search"); // search | massentry
+  const [outputTab, setOutputTab] = useState("search"); // search | massentry | manapool
   const [doneChecks, setDoneChecks] = useState({}); // key -> true, for the direct-links checklist
   const [showImportHelp, setShowImportHelp] = useState(false);
   const [warningsDisabledForever, setWarningsDisabledForever] = useState(
@@ -1439,13 +1465,15 @@ export default function App() {
           </p>
           <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 22px" }}>
             <strong style={{ color: TEXT }}>Beta note:</strong> double-check quantities and printings against
-            TCGplayer before buying. Something look wrong? Use the "Feedback" button in the corner.
+            whichever vendor you buy from before checking out. Something look wrong? Use the "Feedback" button in
+            the corner.
           </p>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             {[
               { id: "search", label: "Search names" },
-              { id: "massentry", label: "Mass Entry format" },
+              { id: "massentry", label: "TCGplayer Mass Entry" },
+              { id: "manapool", label: "ManaPool Mass Entry" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1502,6 +1530,15 @@ export default function App() {
                 name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
                 special treatments) that Mass Entry's strict matching often gets wrong.
               </>
+            ) : outputTab === "manapool" ? (
+              <>
+                Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
+                <a href={MANAPOOL_ADD_DECK_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
+                  ManaPool's Mass Entry
+                </a>{" "}
+                syntax — same shape as TCGplayer's, but their matching is looser (set and collector number are both
+                optional), so it tends to hold up better for Secret Lair, promos, and special treatments too.
+              </>
             ) : (
               <>
                 Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
@@ -1534,29 +1571,55 @@ export default function App() {
             >
               <Copy size={15} /> {copied ? "Copied!" : "Copy list"}
             </button>
-            <a
-              href={massEntryPrefillUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inter"
-              title="Opens Mass Entry with this list already typed in — you'll still want to review it there before checkout"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                background: "transparent",
-                color: TEAL,
-                border: `1px solid ${TEAL}`,
-                borderRadius: 6,
-                padding: "11px 20px",
-                fontSize: 14,
-                fontWeight: 600,
-                cursor: "pointer",
-                textDecoration: "none",
-              }}
-            >
-              Open in Mass Entry, pre-filled <ExternalLink size={15} />
-            </a>
+            {outputTab === "manapool" ? (
+              <a
+                href={MANAPOOL_ADD_DECK_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inter"
+                title="Opens ManaPool's Mass Entry page — paste the list above there (no pre-fill link available for ManaPool yet)"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: "transparent",
+                  color: TEAL,
+                  border: `1px solid ${TEAL}`,
+                  borderRadius: 6,
+                  padding: "11px 20px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textDecoration: "none",
+                }}
+              >
+                Open ManaPool Mass Entry <ExternalLink size={15} />
+              </a>
+            ) : (
+              <a
+                href={massEntryPrefillUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inter"
+                title="Opens Mass Entry with this list already typed in — you'll still want to review it there before checkout"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  background: "transparent",
+                  color: TEAL,
+                  border: `1px solid ${TEAL}`,
+                  borderRadius: 6,
+                  padding: "11px 20px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textDecoration: "none",
+                }}
+              >
+                Open in TCGplayer Mass Entry, pre-filled <ExternalLink size={15} />
+              </a>
+            )}
             <button
               onClick={reset}
               className="inter"
@@ -1579,10 +1642,12 @@ export default function App() {
 
           {lines.length > 0 && (
             <div style={{ marginTop: 32 }}>
-              <div style={{ color: TEXT, fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Direct TCGplayer links</div>
+              <div style={{ color: TEXT, fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Direct product links</div>
               <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.5, marginBottom: 10 }}>
-                One link per card, straight to the exact printing you picked — always correct, since it's a real
-                product page rather than a text match.
+                One link per card, straight to the exact printing you picked. TCGplayer links are always correct —
+                a real product page, not a text match. ManaPool links are a best-effort guess at their URL (no
+                product-id field to key off, unlike TCGplayer), so an occasional one may 404 — the Mass Entry tab
+                above is the reliable fallback for those.
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
                 <div
@@ -1617,6 +1682,7 @@ export default function App() {
               <div style={{ border: "1px solid #2a323d", borderRadius: 6, overflow: "hidden" }}>
                 {lines.map((l, i) => {
                   const done = !!doneChecks[l.key];
+                  const mpUrl = manaPoolUrl(l);
                   return (
                     <div
                       key={l.key}
@@ -1645,23 +1711,38 @@ export default function App() {
                         {l.qty} {l.name} {l.missing || l.basic ? "" : `[${l.set}] ${l.cn}`}
                       </span>
                       <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-                        {l.tcgplayerId ? (
-                          <a
-                            href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
-                          >
-                            TCGplayer <ExternalLink size={11} />
-                          </a>
-                        ) : l.basic ? (
+                        {l.basic ? (
                           <span title="Basic land — any printing works, so this was left unresolved on purpose" style={{ flexShrink: 0, fontSize: 11 }}>
                             any printing
                           </span>
-                        ) : (
-                          <span title="No known TCGplayer listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
+                        ) : !l.tcgplayerId && !mpUrl ? (
+                          <span title="No known product listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
                             no link found
                           </span>
+                        ) : (
+                          <>
+                            {l.tcgplayerId && (
+                              <a
+                                href={`https://www.tcgplayer.com/product/${l.tcgplayerId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                              >
+                                TCGplayer <ExternalLink size={11} />
+                              </a>
+                            )}
+                            {mpUrl && (
+                              <a
+                                href={mpUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Best-effort link built from card name/set/number — may occasionally 404"
+                                style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                              >
+                                ManaPool <ExternalLink size={11} />
+                              </a>
+                            )}
+                          </>
                         )}
                         <input
                           type="checkbox"
