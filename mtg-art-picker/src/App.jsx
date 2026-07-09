@@ -91,6 +91,42 @@ function isBasicLand(name) {
   return BASIC_LAND_NAMES.has(name.trim().toLowerCase());
 }
 
+// Mirrors the treatment labels leanPrinting() in shared/manifest.js derives
+// from Scryfall's border_color/frame_effects/full_art fields — that's
+// already computed once at manifest-build time and shipped on every
+// printing, so prioritizing by art type needs no new fields and no worker
+// redeploy. "normal" targets prints with no special treatment (treatment
+// is null/undefined), which is why its match check needs the `|| null`.
+const ART_TYPE_OPTIONS = [
+  { value: "any", label: "Any" },
+  { value: "borderless", label: "Borderless", treatment: "Borderless" },
+  { value: "showcase", label: "Showcase", treatment: "Showcase" },
+  { value: "extendedart", label: "Extended Art", treatment: "Extended Art" },
+  { value: "etched", label: "Etched", treatment: "Etched" },
+  { value: "retro", label: "Retro Frame", treatment: "Retro Frame" },
+  { value: "fullart", label: "Full Art", treatment: "Full Art" },
+  { value: "normal", label: "Normal (no special treatment)", treatment: null },
+];
+
+function matchesArtType(o, targetTreatment) {
+  return (o.treatment || null) === targetTreatment;
+}
+
+// Narrows a card's options down to only the ones matching the chosen art
+// priority — used wherever an automatic pick (the no-selection default, or
+// the "fill the rest with the cheapest" excess-copy fallback) should honor
+// the priority. Falls back to the full pool when the card has nothing
+// matching, so a card with no borderless print just behaves as if "Any"
+// were chosen for it, per-card, without the user having to notice or toggle
+// anything.
+function artTypeFilterPool(opts, artPriority, disabledForCard) {
+  if (disabledForCard || artPriority === "any") return opts;
+  const target = ART_TYPE_OPTIONS.find((t) => t.value === artPriority);
+  if (!target) return opts;
+  const matches = opts.filter((o) => matchesArtType(o, target.treatment));
+  return matches.length ? matches : opts;
+}
+
 function massEntryLine(l) {
   if (l.missing) return `${l.qty} ${l.name}   [NOT FOUND — verify manually]`;
   if (l.basic) return `${l.qty} ${l.name}`;
@@ -223,6 +259,8 @@ export default function App() {
   const [customSplits, setCustomSplits] = useState({});
   const [advancedSplitOpen, setAdvancedSplitOpen] = useState({}); // name -> bool
   const [droppedCards, setDroppedCards] = useState(new Set()); // card names excluded entirely from the output
+  const [artPriority, setArtPriority] = useState("any"); // ART_TYPE_OPTIONS value, chosen on the landing page
+  const [priorityDisabledCards, setPriorityDisabledCards] = useState(new Set()); // card names opted out of artPriority
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
@@ -329,6 +367,15 @@ export default function App() {
     }
   };
 
+  const togglePriorityForCard = (name) => {
+    setPriorityDisabledCards((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
   const dropCard = (name) => {
     setDroppedCards((prev) => new Set(prev).add(name));
     goNext();
@@ -347,7 +394,19 @@ export default function App() {
   // grid displays instead of computing it a second, possibly different, way.
   const sortedOptsFor = (name) => {
     const opts = printOptions[name] || [];
-    return [...opts].sort((a, b) => Number(isMassEntryRisky(a)) - Number(isMassEntryRisky(b)));
+    const target =
+      artPriority !== "any" && !priorityDisabledCards.has(name)
+        ? ART_TYPE_OPTIONS.find((t) => t.value === artPriority)
+        : null;
+    const hasMatch = target ? opts.some((o) => matchesArtType(o, target.treatment)) : false;
+    return [...opts].sort((a, b) => {
+      if (target && hasMatch) {
+        const am = matchesArtType(a, target.treatment) ? 0 : 1;
+        const bm = matchesArtType(b, target.treatment) ? 0 : 1;
+        if (am !== bm) return am - bm;
+      }
+      return Number(isMassEntryRisky(a)) - Number(isMassEntryRisky(b));
+    });
   };
 
   // Card-to-card navigation (when nothing is zoomed) and in-zoom navigation
@@ -404,10 +463,11 @@ export default function App() {
         unresolved++;
         continue;
       }
+      const priorityPool = artTypeFilterPool(opts, artPriority, priorityDisabledCards.has(name));
       if (sel.length === 0 && isBasicLand(name)) {
         lines.push({ qty, name, set: null, cn: null, price: null, basic: true, key: `${name}::basic` });
       } else if (sel.length === 0) {
-        const p = cheapestOf(opts);
+        const p = cheapestOf(priorityPool);
         lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (minPrice(p) || 0) * qty;
       } else if (sel.length === 1) {
@@ -418,8 +478,8 @@ export default function App() {
         const selectedPrints = sel.map((id) => opts.find((o) => o.id === id)).filter(Boolean);
         const customCells = customSplits[name];
         const entries = isValidSplit(customCells, selectedPrints.length + 1, qty)
-          ? customAllocation(customCells, selectedPrints, opts)
-          : defaultAllocation(qty, selectedPrints, opts);
+          ? customAllocation(customCells, selectedPrints, priorityPool)
+          : defaultAllocation(qty, selectedPrints, priorityPool);
         entries.forEach(({ print: p, qty: count }) => {
           lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
           total += (minPrice(p) || 0) * count;
@@ -445,6 +505,8 @@ export default function App() {
     setCustomSplits({});
     setAdvancedSplitOpen({});
     setDroppedCards(new Set());
+    setArtPriority("any");
+    setPriorityDisabledCards(new Set());
   };
 
   const toggleWarningsForever = () => {
@@ -644,6 +706,39 @@ export default function App() {
             you when that happens.
           </p>
 
+          <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid #2a323d" }}>
+            <div className="mono" style={{ color: TEAL, fontSize: 11, letterSpacing: "0.12em", marginBottom: 10 }}>
+              PRIORITIZE
+            </div>
+            <label style={{ display: "block", fontSize: 12.5, color: SUBTEXT, marginBottom: 6 }}>Art type</label>
+            <select
+              value={artPriority}
+              onChange={(e) => setArtPriority(e.target.value)}
+              className="inter"
+              style={{
+                background: PANEL_BG,
+                color: TEXT,
+                border: "1px solid #2a323d",
+                borderRadius: 6,
+                padding: "9px 12px",
+                fontSize: 13.5,
+                minWidth: 240,
+                cursor: "pointer",
+              }}
+            >
+              {ART_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <p style={{ color: SUBTEXT, fontSize: 11.5, lineHeight: 1.5, margin: "8px 0 0", maxWidth: 480 }}>
+              When set, matching printings are shown first on each card's review page, and are used for any
+              cheapest-printing auto-pick too. Cards with no matching printing just fall back to normal order (you'll
+              see a note when that happens), and there's a toggle to turn this off for an individual card.
+            </p>
+          </div>
+
           <p className="mono" style={{ color: SUBTEXT, fontSize: 11.5, marginTop: 24 }}>
             Card data and images via{" "}
             <a href="https://scryfall.com" target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
@@ -685,13 +780,17 @@ export default function App() {
     const sortedOpts = sortedOptsFor(name);
     const shown = sortedOpts.slice(0, visibleCount);
     const firstRiskyIndex = shown.findIndex((o) => isMassEntryRisky(o));
+    const priorityDisabledForCard = priorityDisabledCards.has(name);
+    const activeArtType = artPriority !== "any" ? ART_TYPE_OPTIONS.find((t) => t.value === artPriority) : null;
+    const hasArtTypeMatch = activeArtType ? opts.some((o) => matchesArtType(o, activeArtType.treatment)) : false;
+    const priorityPool = artTypeFilterPool(opts, artPriority, priorityDisabledForCard);
     const selectedPrints =
       sel.size > 1
         ? Array.from(sel)
             .map((id) => opts.find((o) => o.id === id))
             .filter(Boolean)
         : null;
-    const cheapestOverall = selectedPrints ? cheapestOf(opts) : null;
+    const cheapestOverall = selectedPrints ? cheapestOf(priorityPool) : null;
     const splitEditable = selectedPrints && selectedPrints.length < qty; // nothing to distribute otherwise
     const activeCustomCells =
       splitEditable && isValidSplit(customSplits[name], selectedPrints.length + 1, qty) ? customSplits[name] : null;
@@ -765,6 +864,36 @@ export default function App() {
               >
                 Include it after all
               </button>
+            </div>
+          )}
+
+          {activeArtType && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+                marginBottom: 12,
+              }}
+            >
+              <span className="mono" style={{ fontSize: 11.5, color: SUBTEXT, letterSpacing: "0.02em" }}>
+                {priorityDisabledForCard
+                  ? "Art priority disabled for this card"
+                  : hasArtTypeMatch
+                  ? `Prioritizing ${activeArtType.label} printings`
+                  : `No ${activeArtType.label} printing found for this card — showing normal order`}
+              </span>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: SUBTEXT, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={priorityDisabledForCard}
+                  onChange={() => togglePriorityForCard(name)}
+                  style={{ width: 13, height: 13, accentColor: ACCENT, cursor: "pointer" }}
+                />
+                Disable for this card
+              </label>
             </div>
           )}
 
