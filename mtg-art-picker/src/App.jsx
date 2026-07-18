@@ -411,6 +411,11 @@ export default function App() {
   // Set when a compile resumed a partly-chosen list: { startIndex, chosenCount,
   // allChosen }, drives the one-time banner on the review page. null otherwise.
   const [resumeNotice, setResumeNotice] = useState(null);
+  // True when the results page was reached via "Resume later" (a deliberate
+  // save-and-exit) rather than finishing — drives the prominent "copy this or
+  // lose it, nothing is stored" callout, since that's when the data-loss risk
+  // is highest.
+  const [resumeSave, setResumeSave] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState(null);
@@ -609,11 +614,21 @@ export default function App() {
 
   const goNext = () => {
     if (reviewIndex + 1 >= entries.length) {
+      setResumeSave(false); // reached the results by finishing, not by saving
       setStage("done");
     } else {
       setReviewIndex((i) => i + 1);
       setVisibleCount(24);
     }
+  };
+
+  // "Resume later": jump straight to the results page from mid-flow. Force the
+  // Archidekt tab (the only output that round-trips back into a resume) and
+  // flag it so the results page shows the "copy this or lose it" callout.
+  const saveAndExit = () => {
+    setResumeSave(true);
+    setOutputTab("archidekt");
+    setStage("done");
   };
   const goPrev = () => {
     if (reviewIndex > 0) {
@@ -763,6 +778,7 @@ export default function App() {
     setSelections({});
     setFinishSelections({});
     setResumeNotice(null);
+    setResumeSave(false);
     setReviewIndex(0);
     setError(null);
     setCopied(false);
@@ -1102,7 +1118,7 @@ export default function App() {
               CARD {reviewIndex + 1} OF {entries.length} · QTY {qty}
             </div>
             <button
-              onClick={() => setStage("done")}
+              onClick={saveAndExit}
               title="Jump to your list now. Copy it, then paste it back on the home page later to pick up where you left off — nothing is stored anywhere, so copy your list before you go."
               className="inter"
               style={{
@@ -1852,7 +1868,9 @@ export default function App() {
           <div className="mono" style={{ color: TEAL, fontSize: 12, letterSpacing: "0.15em", marginBottom: 8 }}>
             PROJECT MANA · EVERY PRINTING, YOUR PICK{betaPill}
           </div>
-          <h1 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px" }}>Your finished list</h1>
+          <h1 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 6px" }}>
+            {resumeSave ? "Your list so far" : "Your finished list"}
+          </h1>
           <p style={{ color: SUBTEXT, fontSize: 14.5, margin: "0 0 10px" }}>
             {lines.length} line{lines.length === 1 ? "" : "s"} · est. total{" "}
             <span className="mono" style={{ color: TEXT }}>
@@ -1875,6 +1893,83 @@ export default function App() {
             whichever vendor you buy from before checking out. Something look wrong? Use the "Feedback" button in
             the corner.
           </p>
+
+          {resumeSave && (
+            <div
+              style={{
+                display: "flex",
+                gap: 12,
+                alignItems: "flex-start",
+                padding: "14px 16px",
+                marginBottom: 22,
+                background: "rgba(178,58,72,0.12)",
+                border: `1px solid ${ACCENT}`,
+                borderRadius: 10,
+              }}
+            >
+              <AlertTriangle size={18} style={{ color: ACCENT, flexShrink: 0, marginTop: 1 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: TEXT, fontSize: 14.5, fontWeight: 600, marginBottom: 4 }}>
+                  Copy this list to keep your progress — nothing is saved
+                </div>
+                <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, margin: 0 }}>
+                  Project Mana stores nothing — not on a server, not on your device. The{" "}
+                  <strong style={{ color: TEXT }}>Archidekt list below is the only copy of your picks.</strong> Copy
+                  it and keep it somewhere (a note, a message to yourself, wherever). To pick up where you left off,
+                  paste it back on the home page. <strong style={{ color: TEXT }}>Close or refresh this page without
+                  copying and your picks are gone.</strong>
+                </p>
+                <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(archidektText);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1800);
+                      } catch (e) {}
+                    }}
+                    className="inter"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      background: ACCENT,
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "9px 16px",
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Copy size={14} /> {copied ? "Copied!" : "Copy my list"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setResumeSave(false);
+                      setStage("review");
+                    }}
+                    className="inter"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      background: "transparent",
+                      color: TEXT,
+                      border: "1px solid #2a323d",
+                      borderRadius: 6,
+                      padding: "9px 16px",
+                      fontSize: 13.5,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <ChevronLeft size={14} /> Back to picking
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
             {[
@@ -1911,7 +2006,7 @@ export default function App() {
             </p>
           )}
 
-          {outputTab === "archidekt" && notPicked > 0 && (
+          {outputTab === "archidekt" && notPicked > 0 && !resumeSave && (
             <p className="mono" style={{ color: TEAL, fontSize: 11, letterSpacing: "0.01em", margin: "0 0 8px" }}>
               {notPicked} card{notPicked === 1 ? "" : "s"} you haven't picked show as name only. Copy this whole
               list and paste it back on the home page to resume where you left off.
