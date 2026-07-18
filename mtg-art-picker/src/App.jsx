@@ -3,8 +3,6 @@ import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw
 import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
 import FeedbackWidget from "./FeedbackWidget";
 
-const TCGPLAYER_MASS_ENTRY_URL = "https://www.tcgplayer.com/massentry";
-
 const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Watery Grave
 1 Blood Crypt
@@ -30,18 +28,115 @@ const MAX_ENTRIES = 500;
 const MAX_QTY = 999;
 const MAX_NAME_LENGTH = 200; // no real card name is anywhere close to this
 
-function parseList(text) {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const map = new Map();
-  for (const line of lines) {
-    const m = line.match(/^(\d+)\s+(.+)$/);
-    if (!m) continue;
-    const qty = Math.min(parseInt(m[1], 10), MAX_QTY);
-    const name = m[2].trim().slice(0, MAX_NAME_LENGTH);
-    if (!name) continue;
-    map.set(name, Math.min((map.get(name) || 0) + qty, MAX_QTY));
+// Persisted so a page refresh (or a Start Over) doesn't throw away a list the
+// user pasted — the single most annoying way to lose work in this flow.
+const RAW_TEXT_STORAGE_KEY = "pm_raw_list";
+
+// The three physical finishes a printing can come in. Availability is
+// inferred from which price fields Scryfall populated (usd / usd_foil /
+// usd_etched) — the manifest already ships those per printing, so offering a
+// finish choice needs no new manifest field and no worker redeploy. The
+// `indicator` is Archidekt/Moxfield's annotated-list marker: *F* for foil,
+// *E* for etched, nothing for a normal card.
+const FINISHES = [
+  { value: "nonfoil", label: "Normal", priceKey: "usd", indicator: "" },
+  { value: "foil", label: "Foil", priceKey: "usdFoil", indicator: "*F*" },
+  { value: "etched", label: "Etched", priceKey: "usdEtched", indicator: "*E*" },
+];
+
+function availableFinishes(o) {
+  const avail = FINISHES.filter((f) => o?.prices?.[f.priceKey] != null);
+  return avail.length ? avail : [FINISHES[0]];
+}
+
+// The finishes to surface in the picker: everything priced, plus whatever is
+// currently chosen even if it has no price (e.g. a *F* the user pasted in for
+// a printing our price snapshot happens to lack a foil price for), so an
+// explicit choice never silently vanishes from the control.
+function finishOptionsFor(o, chosen) {
+  const avail = availableFinishes(o);
+  if (chosen && !avail.some((f) => f.value === chosen)) {
+    const extra = FINISHES.find((f) => f.value === chosen);
+    if (extra) return [...avail, extra];
   }
-  return Array.from(map.entries()).map(([name, qty]) => ({ name, qty }));
+  return avail;
+}
+
+function priceForFinish(o, finishValue) {
+  const f = FINISHES.find((x) => x.value === finishValue);
+  const p = f ? o?.prices?.[f.priceKey] : null;
+  return p != null ? p : minPrice(o);
+}
+
+// Parses one decklist line into { qty, name, set, cn, finish }, tolerating
+// both this tool's own outputs and typical Archidekt / Moxfield / ManaPool
+// exports. Quantities may be "1" or Archidekt's "1x". A set + collector
+// number may be attached as Archidekt's "(set) 123" or ManaPool/TCGplayer's
+// "[SET] 123", and a foil/etched finish as "*F*" / "*E*". Every one of those
+// trailing annotations is stripped back off the name so the lookup still sees
+// just the card name; set/cn/finish come back null when absent.
+function parseLine(raw) {
+  let s = (raw || "").trim();
+  if (!s) return null;
+  const qm = s.match(/^(\d+)\s*[xX]?\s+(.*)$/);
+  if (!qm) return null;
+  const qty = Math.min(parseInt(qm[1], 10), MAX_QTY);
+  s = qm[2].trim();
+
+  let finish = null;
+  s = s
+    .replace(/\*\s*([feFE])\s*\*/g, (_, g) => {
+      finish = g.toLowerCase() === "f" ? "foil" : "etched";
+      return " ";
+    })
+    .trim();
+
+  let set = null;
+  let cn = null;
+  // Archidekt uses parentheses for the set code (its categories use [] and
+  // its color tags use ^^, never ()), so a short alphanumeric run in parens
+  // is unambiguously a set code; the collector number after it is optional.
+  let m = s.match(/\(([A-Za-z0-9]{2,6})\)\s*([0-9][0-9A-Za-z★-]*)?/);
+  if (!m) {
+    // ManaPool / TCGplayer bracket form. Require a following collector number
+    // so a bare Archidekt category like "[Ramp]" isn't mistaken for a set.
+    m = s.match(/\[([A-Za-z0-9]{2,6})\]\s*([0-9][0-9A-Za-z★-]*)/);
+  }
+  if (m) {
+    set = m[1];
+    if (m[2]) cn = m[2];
+    s = (s.slice(0, m.index) + s.slice(m.index + m[0].length)).trim();
+  }
+
+  // Drop any leftover Archidekt category ([...]) or color-tag (^...^)
+  // annotation, then collapse the whitespace those removals leave behind.
+  s = s
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\^+[^^]*\^+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const name = s.slice(0, MAX_NAME_LENGTH).trim();
+  if (!name) return null;
+  return { qty, name, set, cn, finish };
+}
+
+// Aggregates parsed lines by card name (summing quantities, as before) while
+// collecting any pre-chosen printings as `prefs` — { set, cn, finish } hints
+// that handleCompile later resolves to real printing ids to pre-select and
+// pre-highlight, so a fully-specified list round-trips back into the picker.
+function parseList(text) {
+  const map = new Map();
+  for (const line of text.split("\n")) {
+    const parsed = parseLine(line);
+    if (!parsed) continue;
+    const { qty, name, set, cn, finish } = parsed;
+    const existing = map.get(name) || { name, qty: 0, prefs: [] };
+    existing.qty = Math.min(existing.qty + qty, MAX_QTY);
+    if (set && cn) existing.prefs.push({ set, cn, finish });
+    map.set(name, existing);
+  }
+  return Array.from(map.values());
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -139,6 +234,19 @@ function massEntryLine(l) {
   return `${l.qty} ${l.name} [${l.set}] ${l.cn}`;
 }
 
+// Archidekt / Moxfield annotated-list syntax: "1x Name (set) 123 *F*". The
+// quantity carries an "x", the set code is lowercased in parentheses, and the
+// chosen finish becomes a *F* (foil) / *E* (etched) marker so foils import as
+// foils instead of silently falling back to the non-foil printing. This is
+// the format the screenshot shows and the reason the finish picker exists.
+function archidektLine(l) {
+  if (l.missing) return `${l.qty}x ${l.name}   [NOT FOUND — verify manually]`;
+  if (l.basic) return `${l.qty}x ${l.name}`;
+  const fin = FINISHES.find((f) => f.value === l.finish);
+  const suffix = fin && fin.indicator ? ` ${fin.indicator}` : "";
+  return `${l.qty}x ${l.name} (${(l.set || "").toLowerCase()}) ${l.cn}${suffix}`;
+}
+
 // Unlike the Mass Entry syntax, this doesn't need to exactly match a
 // [SET] collector-number pair — it just needs to contain words TCGplayer's
 // own product search can find, so it holds up for prints (Secret Lair,
@@ -155,18 +263,6 @@ function searchableLines(l) {
   const treatment = l.treatment ? ` · ${l.treatment}` : "";
   const line = `${l.name} — ${l.setName} (${l.set}) #${l.cn}${treatment}`;
   return Array(l.qty).fill(line);
-}
-
-const MASS_ENTRY_PREFILL_MAX_URL_LENGTH = 6000;
-
-// TCGplayer's Mass Entry page reads a `c` query param to pre-seed its own
-// textbox (each entry prefixed with `||`), so this still goes through the
-// same fuzzy set/number matching as a manual paste — it only removes the
-// copy/paste step, it doesn't fix what Mass Entry gets wrong.
-function buildMassEntryPrefillUrl(lines) {
-  const c = lines.map((l) => `||${massEntryLine(l)}`).join("");
-  const url = `${TCGPLAYER_MASS_ENTRY_URL}?productline=Magic&c=${encodeURIComponent(c)}`;
-  return url.length <= MASS_ENTRY_PREFILL_MAX_URL_LENGTH ? url : TCGPLAYER_MASS_ENTRY_URL;
 }
 
 const MANAPOOL_ADD_DECK_URL = "https://manapool.com/add-deck";
@@ -199,6 +295,24 @@ function manaPoolSlug(name) {
 function manaPoolUrl(l) {
   if (l.missing || l.basic || !l.set || !l.cn) return null;
   return `https://manapool.com/card/${l.set.toLowerCase()}/${l.cn}/${manaPoolSlug(l.name)}`;
+}
+
+// Best-effort direct Card Kingdom product link. Unlike TCGplayer (product id)
+// or ManaPool (set code + collector number), Card Kingdom's own URLs key off
+// slugified full names — set-name slug then card-name slug, confirmed against
+// real pages (e.g. cardkingdom.com/mtg/innistrad-crimson-vow/slug-token) —
+// with a "-foil" variant for foil/etched. There's no id to match, so a set
+// whose Card Kingdom name differs from Scryfall's, or an unusual card name,
+// can 404; it's offered alongside the others, never as the only link. Uses
+// the full set name (l.setName), not the short code, since that's what the
+// slug is built from.
+function cardKingdomUrl(l) {
+  if (l.missing || l.basic || !l.setName || !l.name) return null;
+  const setSlug = manaPoolSlug(l.setName);
+  const nameSlug = manaPoolSlug(l.name);
+  if (!setSlug || !nameSlug) return null;
+  const foil = l.finish === "foil" || l.finish === "etched" ? "-foil" : "";
+  return `https://www.cardkingdom.com/mtg/${setSlug}/${nameSlug}${foil}`;
 }
 
 // Generic, not qty-specific, so any future heads-up/caution note in the app
@@ -277,17 +391,22 @@ function isValidSplit(cells, expectedLength, qty) {
 
 export default function App() {
   const [stage, setStage] = useState("input"); // input | loading | review | done
-  const [rawText, setRawText] = useState("");
+  // Seeded from localStorage so a refresh or Start Over keeps the pasted list.
+  const [rawText, setRawText] = useState(
+    () => (typeof window !== "undefined" && window.localStorage.getItem(RAW_TEXT_STORAGE_KEY)) || ""
+  );
   const [entries, setEntries] = useState([]);
   const [printOptions, setPrintOptions] = useState({});
   const [progress, setProgress] = useState({ done: 0, total: 0, current: "" });
   const [selections, setSelections] = useState({});
+  // name -> { printingId -> "nonfoil" | "foil" | "etched" }, chosen per print.
+  const [finishSelections, setFinishSelections] = useState({});
   const [reviewIndex, setReviewIndex] = useState(0);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [zoomed, setZoomed] = useState(null);
-  const [outputTab, setOutputTab] = useState("search"); // search | massentry | manapool
+  const [outputTab, setOutputTab] = useState("archidekt"); // archidekt | manapool | search
   const [doneChecks, setDoneChecks] = useState({}); // key -> true, for the direct-links checklist
   const [showImportHelp, setShowImportHelp] = useState(false);
   const [warningsDisabledForever, setWarningsDisabledForever] = useState(
@@ -302,6 +421,13 @@ export default function App() {
   const compileRunId = useRef(0);
   const zoomCloseRef = useRef(null);
   const zoomReturnFocusRef = useRef(null);
+
+  // Keep the pasted list in localStorage so refreshing the page — or hitting
+  // Start Over — never throws it away. Reset() deliberately leaves rawText
+  // alone for the same reason; this just mirrors edits out to storage.
+  useEffect(() => {
+    if (typeof window !== "undefined") window.localStorage.setItem(RAW_TEXT_STORAGE_KEY, rawText);
+  }, [rawText]);
 
   // Standard modal focus handling: move focus into the zoom overlay when it
   // opens (so the background grid isn't left silently eating keystrokes)
@@ -345,6 +471,42 @@ export default function App() {
       }
       if (compileRunId.current !== runId) return; // user navigated away (e.g. Start Over) mid-load
     }
+
+    // Resolve any pre-chosen printings from the pasted list into real print
+    // ids, so a list that already names sets/collector-numbers/foils comes
+    // back with those printings pre-selected (and pre-highlighted) and their
+    // finish applied — that's the "art already chosen" round-trip. Matching is
+    // by set code + collector number, case-insensitively.
+    const seededSelections = {};
+    const seededFinishes = {};
+    for (const { name, prefs } of parsed) {
+      if (!prefs || !prefs.length) continue;
+      const pool = opts[name] || [];
+      const ids = new Set();
+      const finMap = {};
+      for (const pref of prefs) {
+        const match = pool.find(
+          (o) =>
+            String(o.set).toLowerCase() === String(pref.set).toLowerCase() &&
+            String(o.cn).toLowerCase() === String(pref.cn).toLowerCase()
+        );
+        if (!match) continue;
+        ids.add(match.id);
+        if (pref.finish) finMap[match.id] = pref.finish;
+      }
+      if (ids.size) seededSelections[name] = ids;
+      if (Object.keys(finMap).length) seededFinishes[name] = finMap;
+    }
+
+    // A fresh compile starts every per-card decision from a clean slate (plus
+    // whatever the pasted list pre-seeded), so re-running never leaves stale
+    // splits/drops keyed to a previous list lingering behind.
+    setSelections(seededSelections);
+    setFinishSelections(seededFinishes);
+    setCustomSplits({});
+    setAdvancedSplitOpen({});
+    setDroppedCards(new Set());
+    setPriorityDisabledCards(new Set());
     setProgress({ done: parsed.length, total: parsed.length, current: "" });
     setPrintOptions(opts);
     setStage("review");
@@ -353,6 +515,7 @@ export default function App() {
   }, [rawText]);
 
   const toggleSelect = (name, id) => {
+    const wasSelected = !!selections[name]?.has(id);
     setSelections((prev) => {
       const next = { ...prev };
       const set = new Set(next[name] || []);
@@ -361,6 +524,17 @@ export default function App() {
       next[name] = set;
       return next;
     });
+    // A finish is only meaningful while its print is selected. Dropping the
+    // stored finish on deselect keeps a foil the user set, then unpicked, from
+    // silently riding along if that same print later becomes an auto-pick.
+    if (wasSelected) {
+      setFinishSelections((prev) => {
+        if (!prev[name] || !(id in prev[name])) return prev;
+        const nextForName = { ...prev[name] };
+        delete nextForName[id];
+        return { ...prev, [name]: nextForName };
+      });
+    }
     // A custom split's cell count is tied to how many prints were selected
     // when it was made — any change to the selection invalidates it rather
     // than leaving a stale split silently mismatched to the new count.
@@ -382,12 +556,31 @@ export default function App() {
 
   const clearSelection = (name) => {
     setSelections((prev) => ({ ...prev, [name]: new Set() }));
+    setFinishSelections((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
     setCustomSplits((prev) => {
       if (!(name in prev)) return prev;
       const next = { ...prev };
       delete next[name];
       return next;
     });
+  };
+
+  // The finish chosen for a specific printing of a card, defaulting to the
+  // first available finish (Normal when the print has a non-foil price) when
+  // the user hasn't picked one. Kept per (name, printId) so different prints
+  // of the same card can be, say, one foil and one normal.
+  const chosenFinish = (name, o) => {
+    const stored = finishSelections[name]?.[o.id];
+    if (stored) return stored;
+    return availableFinishes(o)[0].value;
+  };
+  const setFinish = (name, id, value) => {
+    setFinishSelections((prev) => ({ ...prev, [name]: { ...(prev[name] || {}), [id]: value } }));
   };
 
   const goNext = () => {
@@ -506,12 +699,16 @@ export default function App() {
         lines.push({ qty, name, set: null, cn: null, price: null, basic: true, key: `${name}::basic` });
       } else if (sel.length === 0) {
         const p = cheapestOf(priorityPool);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
-        total += (minPrice(p) || 0) * qty;
+        const finish = chosenFinish(name, p);
+        const price = priceForFinish(p, finish);
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+        total += (price || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
-        total += (minPrice(p) || 0) * qty;
+        const finish = chosenFinish(name, p);
+        const price = priceForFinish(p, finish);
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+        total += (price || 0) * qty;
       } else {
         const selectedPrints = sel.map((id) => opts.find((o) => o.id === id)).filter(Boolean);
         const customCells = customSplits[name];
@@ -519,8 +716,10 @@ export default function App() {
           ? customAllocation(customCells, selectedPrints, priorityPool)
           : defaultAllocation(qty, selectedPrints, priorityPool);
         entries.forEach(({ print: p, qty: count }) => {
-          lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, price: minPrice(p), tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
-          total += (minPrice(p) || 0) * count;
+          const finish = chosenFinish(name, p);
+          const price = priceForFinish(p, finish);
+          lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+          total += (price || 0) * count;
         });
       }
     }
@@ -530,15 +729,17 @@ export default function App() {
   const reset = () => {
     compileRunId.current++; // invalidate any in-flight handleCompile loop
     setStage("input");
-    setRawText("");
+    // rawText is intentionally left intact — Start Over returns to the home
+    // page with the original list still in the box (and it's persisted too).
     setEntries([]);
     setPrintOptions({});
     setSelections({});
+    setFinishSelections({});
     setReviewIndex(0);
     setError(null);
     setCopied(false);
     setZoomed(null);
-    setOutputTab("search");
+    setOutputTab("archidekt");
     setDoneChecks({});
     setCustomSplits({});
     setAdvancedSplitOpen({});
@@ -632,9 +833,11 @@ export default function App() {
             Choose your printings
           </h1>
           <p style={{ color: SUBTEXT, fontSize: 15, lineHeight: 1.6, margin: "0 0 28px" }}>
-            Paste your list below — one card per line, formatted as <span className="mono">qty card name</span>. You'll
-            page through every card one at a time and pick the art you want. Skip any card to default to the cheapest
-            printing.
+            Paste your list below — one card per line, formatted as <span className="mono">qty card name</span>{" "}
+            (both <span className="mono">1</span> and Archidekt's <span className="mono">1x</span> work). You'll page
+            through every card one at a time and pick the art you want. Skip any card to default to the cheapest
+            printing. Already have a list with sets, collector numbers, or <span className="mono">*F*</span> foils
+            filled in? Paste it as-is and those picks come back pre-selected.
           </p>
           <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 28px" }}>
             <strong style={{ color: TEXT }}>This is a beta.</strong> Printing data and export formatting may
@@ -1183,6 +1386,52 @@ export default function App() {
                             </span>
                           )}
                         </div>
+                        {isSel &&
+                          (() => {
+                            // Finish picker: appears once a print is selected, so the
+                            // user chooses foil/etched right here instead of hunting
+                            // for it later. Only shown when there's a real choice.
+                            const chosen = chosenFinish(name, o);
+                            const finOpts = finishOptionsFor(o, chosen);
+                            if (finOpts.length < 2) return null;
+                            return (
+                              <div
+                                style={{ display: "flex", gap: 4, marginTop: 6 }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {finOpts.map((f) => {
+                                  const active = chosen === f.value;
+                                  const fp = o.prices?.[f.priceKey];
+                                  return (
+                                    <button
+                                      key={f.value}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setFinish(name, o.id, f.value);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                                      }}
+                                      title={`${f.label}${fp != null ? ` — $${fp.toFixed(2)}` : ""}`}
+                                      className="mono"
+                                      style={{
+                                        flex: 1,
+                                        padding: "3px 2px",
+                                        fontSize: 9.5,
+                                        borderRadius: 4,
+                                        cursor: "pointer",
+                                        background: active ? ACCENT : "transparent",
+                                        color: active ? "#fff" : SUBTEXT,
+                                        border: `1px solid ${active ? ACCENT : "#2a323d"}`,
+                                      }}
+                                    >
+                                      {f.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
                       </div>
                     </div>
                   );
@@ -1427,6 +1676,45 @@ export default function App() {
             >
               <Check size={14} /> {sel.has(zoomed.id) ? "Selected" : "Select this printing"}
             </button>
+            {sel.has(zoomed.id) &&
+              (() => {
+                const chosen = chosenFinish(name, zoomed);
+                const finOpts = finishOptionsFor(zoomed, chosen);
+                if (finOpts.length < 2) return null;
+                return (
+                  <div
+                    style={{ display: "flex", gap: 6, marginTop: 10 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {finOpts.map((f) => {
+                      const active = chosen === f.value;
+                      const fp = zoomed.prices?.[f.priceKey];
+                      return (
+                        <button
+                          key={f.value}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFinish(name, zoomed.id, f.value);
+                          }}
+                          className="mono"
+                          style={{
+                            padding: "5px 12px",
+                            fontSize: 11.5,
+                            borderRadius: 5,
+                            cursor: "pointer",
+                            background: active ? ACCENT : "transparent",
+                            color: active ? "#fff" : SUBTEXT,
+                            border: `1px solid ${active ? ACCENT : "#2a323d"}`,
+                          }}
+                        >
+                          {f.label}
+                          {fp != null ? ` · $${fp.toFixed(2)}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             <p className="mono" style={{ color: SUBTEXT, fontSize: 10.5, marginTop: 16, textAlign: "center" }}>
               ← → browse printings · Enter select · Esc close
             </p>
@@ -1439,10 +1727,11 @@ export default function App() {
   // ---------- DONE STAGE ----------
   if (stage === "done") {
     const { lines, total, unresolved } = buildOutput();
+    const archidektText = lines.map(archidektLine).join("\n");
+    const manaPoolText = lines.map(massEntryLine).join("\n");
     const searchText = lines.flatMap(searchableLines).join("\n");
-    const massEntryText = lines.map(massEntryLine).join("\n");
-    const outputText = outputTab === "search" ? searchText : massEntryText;
-    const massEntryPrefillUrl = buildMassEntryPrefillUrl(lines);
+    const outputText =
+      outputTab === "archidekt" ? archidektText : outputTab === "manapool" ? manaPoolText : searchText;
     const hasRepeats = lines.some((l) => !l.missing && !l.basic && l.qty > 1);
 
     const copy = async () => {
@@ -1481,11 +1770,11 @@ export default function App() {
             the corner.
           </p>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
             {[
-              { id: "search", label: "Search names" },
-              { id: "massentry", label: "TCGplayer Mass Entry" },
+              { id: "archidekt", label: "Archidekt" },
               { id: "manapool", label: "ManaPool Mass Entry" },
+              { id: "search", label: "Search names" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1536,11 +1825,12 @@ export default function App() {
           />
 
           <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.6, marginTop: 10 }}>
-            {outputTab === "search" ? (
+            {outputTab === "archidekt" ? (
               <>
-                Each line is written to paste into <span className="mono">TCGplayer's own search bar</span> — card
-                name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
-                special treatments) that Mass Entry's strict matching often gets wrong.
+                Format is <span className="mono">1x name (set) 123 *F*</span>, matching Archidekt and Moxfield text
+                import. The finish you picked rides along — <span className="mono">*F*</span> for foil,{" "}
+                <span className="mono">*E*</span> for etched — so foils import as foils. In Archidekt, use{" "}
+                <strong style={{ color: TEXT }}>Import → Text</strong> and paste this in.
               </>
             ) : outputTab === "manapool" ? (
               <>
@@ -1548,17 +1838,14 @@ export default function App() {
                 <a href={MANAPOOL_ADD_DECK_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
                   ManaPool's Mass Entry
                 </a>{" "}
-                syntax — same shape as TCGplayer's, but their matching is looser (set and collector number are both
-                optional), so it tends to hold up better for Secret Lair, promos, and special treatments too.
+                syntax. Their matching is loose (set and collector number are both optional), so it tends to hold up
+                well for Secret Lair, promos, and special treatments too.
               </>
             ) : (
               <>
-                Format is <span className="mono">qty name [SET] collector-number</span>, matching{" "}
-                <a href={TCGPLAYER_MASS_ENTRY_URL} target="_blank" rel="noopener noreferrer" style={{ color: TEAL }}>
-                  TCGplayer's Mass Entry
-                </a>{" "}
-                syntax. Works well for standard boosters — for Secret Lair, promos, and special treatments, use the
-                "Search names" tab or the direct links below instead.
+                Each line is written to paste into <span className="mono">TCGplayer's own search bar</span> — card
+                name plus set name, so it finds the right product page even for prints (Secret Lair drops, promos,
+                special treatments) that mass-entry's strict matching often gets wrong.
               </>
             )}
           </p>
@@ -1583,13 +1870,13 @@ export default function App() {
             >
               <Copy size={15} /> {copied ? "Copied!" : "Copy list"}
             </button>
-            {outputTab === "manapool" ? (
+            {outputTab === "manapool" && (
               <a
                 href={MANAPOOL_ADD_DECK_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inter"
-                title="Opens ManaPool's Mass Entry page — paste the list above there (no pre-fill link available for ManaPool yet)"
+                title="Opens ManaPool's Mass Entry page — paste the list above there"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1606,30 +1893,6 @@ export default function App() {
                 }}
               >
                 Open ManaPool Mass Entry <ExternalLink size={15} />
-              </a>
-            ) : (
-              <a
-                href={massEntryPrefillUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inter"
-                title="Opens Mass Entry with this list already typed in — you'll still want to review it there before checkout"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  background: "transparent",
-                  color: TEAL,
-                  border: `1px solid ${TEAL}`,
-                  borderRadius: 6,
-                  padding: "11px 20px",
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textDecoration: "none",
-                }}
-              >
-                Open in TCGplayer Mass Entry, pre-filled <ExternalLink size={15} />
               </a>
             )}
             <button
@@ -1656,10 +1919,11 @@ export default function App() {
             <div style={{ marginTop: 32 }}>
               <div style={{ color: TEXT, fontSize: 14, fontWeight: 600, marginBottom: 3 }}>Direct product links</div>
               <p style={{ color: SUBTEXT, fontSize: 12.5, lineHeight: 1.5, marginBottom: 10 }}>
-                One link per card, straight to the exact printing you picked. TCGplayer links are always correct —
-                a real product page, not a text match. ManaPool links are a best-effort guess at their URL (no
-                product-id field to key off, unlike TCGplayer), so an occasional one may 404 — the Mass Entry tab
-                above is the reliable fallback for those.
+                One row per card, with links straight to the exact printing you picked. TCGplayer links are always
+                correct — a real product page, not a text match. ManaPool and Card Kingdom links are a best-effort
+                guess at their URL (no product-id field to key off, unlike TCGplayer), so an occasional one may 404 —
+                the ManaPool or Search tabs above are the reliable fallback for those. A card with no link to any of
+                the three shows "no link found".
               </p>
               <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 2 }}>
                 <div
@@ -1695,6 +1959,8 @@ export default function App() {
                 {lines.map((l, i) => {
                   const done = !!doneChecks[l.key];
                   const mpUrl = manaPoolUrl(l);
+                  const ckUrl = cardKingdomUrl(l);
+                  const finIndicator = FINISHES.find((f) => f.value === l.finish)?.indicator || "";
                   return (
                     <div
                       key={l.key}
@@ -1721,13 +1987,14 @@ export default function App() {
                         }}
                       >
                         {l.qty} {l.name} {l.missing || l.basic ? "" : `[${l.set}] ${l.cn}`}
+                        {finIndicator && <span style={{ color: "#c9a227" }}> {finIndicator}</span>}
                       </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
                         {l.basic ? (
                           <span title="Basic land — any printing works, so this was left unresolved on purpose" style={{ flexShrink: 0, fontSize: 11 }}>
                             any printing
                           </span>
-                        ) : !l.tcgplayerId && !mpUrl ? (
+                        ) : !l.tcgplayerId && !mpUrl && !ckUrl ? (
                           <span title="No known product listing — try searching by name" style={{ flexShrink: 0, fontSize: 11 }}>
                             no link found
                           </span>
@@ -1752,6 +2019,17 @@ export default function App() {
                                 style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
                               >
                                 ManaPool <ExternalLink size={11} />
+                              </a>
+                            )}
+                            {ckUrl && (
+                              <a
+                                href={ckUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Best-effort link built from set + card name — may occasionally 404"
+                                style={{ color: TEAL, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}
+                              >
+                                Card Kingdom <ExternalLink size={11} />
                               </a>
                             )}
                           </>
