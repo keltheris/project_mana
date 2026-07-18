@@ -1189,7 +1189,7 @@ export default function App() {
                 {resumeNotice.skippedBasics?.length > 0 && (
                   <div style={{ marginTop: 6 }}>
                     Skipped {resumeNotice.skippedBasics.length} basic land
-                    {resumeNotice.skippedBasics.length === 1 ? "" : "s"} — you don't normally pick their art.{" "}
+                    {resumeNotice.skippedBasics.length === 1 ? "" : "s"}.{" "}
                     <button
                       onClick={() => {
                         setReviewIndex(resumeNotice.firstBasicIndex);
