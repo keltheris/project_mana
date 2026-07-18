@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home, XCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home, XCircle, Bookmark } from "lucide-react";
 import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
 import FeedbackWidget from "./FeedbackWidget";
 
@@ -239,9 +239,16 @@ function massEntryLine(l) {
 // chosen finish becomes a *F* (foil) / *E* (etched) marker so foils import as
 // foils instead of silently falling back to the non-foil printing. This is
 // the format the screenshot shows and the reason the finish picker exists.
+//
+// A card the user hasn't actually picked — basic lands, and `auto` cheapest
+// fallbacks (see buildOutput) — is emitted name-only, with no set/collector
+// number. That's what makes this list a "resume" list: name-only lines read
+// back as un-chosen, so re-importing the whole thing drops the user back on
+// the first card they still need to decide, instead of treating the tool's
+// own cheapest guess as a real pick.
 function archidektLine(l) {
   if (l.missing) return `${l.qty}x ${l.name}   [NOT FOUND — verify manually]`;
-  if (l.basic) return `${l.qty}x ${l.name}`;
+  if (l.basic || l.auto) return `${l.qty}x ${l.name}`;
   const fin = FINISHES.find((f) => f.value === l.finish);
   const suffix = fin && fin.indicator ? ` ${fin.indicator}` : "";
   return `${l.qty}x ${l.name} (${(l.set || "").toLowerCase()}) ${l.cn}${suffix}`;
@@ -401,6 +408,9 @@ export default function App() {
   const [selections, setSelections] = useState({});
   // name -> { printingId -> "nonfoil" | "foil" | "etched" }, chosen per print.
   const [finishSelections, setFinishSelections] = useState({});
+  // Set when a compile resumed a partly-chosen list: { startIndex, chosenCount,
+  // allChosen }, drives the one-time banner on the review page. null otherwise.
+  const [resumeNotice, setResumeNotice] = useState(null);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [visibleCount, setVisibleCount] = useState(24);
   const [error, setError] = useState(null);
@@ -498,6 +508,15 @@ export default function App() {
       if (Object.keys(finMap).length) seededFinishes[name] = finMap;
     }
 
+    // Resume: drop the user on the first card that still has no pick, so a
+    // saved (partly-chosen) list picks up where they left off instead of
+    // making them page past everything they already did. If every card is
+    // already chosen, there's nothing to resume — start at the beginning so
+    // they can review or redo. A fully fresh list also lands on index 0.
+    const chosenCount = Object.keys(seededSelections).length;
+    let resumeIndex = parsed.findIndex((e) => !seededSelections[e.name]?.size);
+    if (resumeIndex < 0) resumeIndex = 0;
+
     // A fresh compile starts every per-card decision from a clean slate (plus
     // whatever the pasted list pre-seeded), so re-running never leaves stale
     // splits/drops keyed to a previous list lingering behind.
@@ -507,10 +526,15 @@ export default function App() {
     setAdvancedSplitOpen({});
     setDroppedCards(new Set());
     setPriorityDisabledCards(new Set());
+    setResumeNotice(
+      chosenCount > 0
+        ? { startIndex: resumeIndex, chosenCount, allChosen: chosenCount === parsed.length }
+        : null
+    );
     setProgress({ done: parsed.length, total: parsed.length, current: "" });
     setPrintOptions(opts);
     setStage("review");
-    setReviewIndex(0);
+    setReviewIndex(resumeIndex);
     setVisibleCount(24);
   }, [rawText]);
 
@@ -698,10 +722,13 @@ export default function App() {
       if (sel.length === 0 && isBasicLand(name)) {
         lines.push({ qty, name, set: null, cn: null, price: null, basic: true, key: `${name}::basic` });
       } else if (sel.length === 0) {
+        // No pick made — fall back to the cheapest printing for the buy-list
+        // outputs (ManaPool / Search / direct links / total), but flag it
+        // `auto` so the Archidekt list renders it name-only for resuming.
         const p = cheapestOf(priorityPool);
         const finish = chosenFinish(name, p);
         const price = priceForFinish(p, finish);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, auto: true, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (price || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
@@ -735,6 +762,7 @@ export default function App() {
     setPrintOptions({});
     setSelections({});
     setFinishSelections({});
+    setResumeNotice(null);
     setReviewIndex(0);
     setError(null);
     setCopied(false);
@@ -837,7 +865,9 @@ export default function App() {
             (both <span className="mono">1</span> and Archidekt's <span className="mono">1x</span> work). You'll page
             through every card one at a time and pick the art you want. Skip any card to default to the cheapest
             printing. Already have a list with sets, collector numbers, or <span className="mono">*F*</span> foils
-            filled in? Paste it as-is and those picks come back pre-selected.
+            filled in? Paste it as-is — those picks come back pre-selected, and you'll pick up on the first card you
+            haven't chosen yet. That's how <strong style={{ color: TEXT }}>Resume later</strong> works: it hands you
+            this exact list to copy, and pasting it back drops you right where you stopped.
           </p>
           <p style={{ color: SUBTEXT, fontSize: 13, lineHeight: 1.6, margin: "0 0 28px" }}>
             <strong style={{ color: TEXT }}>This is a beta.</strong> Printing data and export formatting may
@@ -1067,9 +1097,77 @@ export default function App() {
             ))}
           </div>
 
-          <div className="mono" style={{ color: SUBTEXT, fontSize: 12, letterSpacing: "0.1em", marginBottom: 4 }}>
-            CARD {reviewIndex + 1} OF {entries.length} · QTY {qty}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 4, flexWrap: "wrap" }}>
+            <div className="mono" style={{ color: SUBTEXT, fontSize: 12, letterSpacing: "0.1em" }}>
+              CARD {reviewIndex + 1} OF {entries.length} · QTY {qty}
+            </div>
+            <button
+              onClick={() => setStage("done")}
+              title="Jump to your list now. Copy it, then paste it back on the home page later to pick up where you left off — nothing is stored anywhere, so copy your list before you go."
+              className="inter"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "transparent",
+                color: TEAL,
+                border: `1px solid ${TEAL}`,
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 12.5,
+                cursor: "pointer",
+              }}
+            >
+              <Bookmark size={13} /> Resume later
+            </button>
           </div>
+          {resumeNotice && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "10px 14px",
+                background: "rgba(60,140,150,0.1)",
+                border: `1px solid ${TEAL}`,
+                borderRadius: 8,
+                margin: "6px 0 14px",
+              }}
+            >
+              <span style={{ fontSize: 12.5, color: SUBTEXT, lineHeight: 1.5 }}>
+                {resumeNotice.allChosen ? (
+                  <>
+                    <strong style={{ color: TEXT }}>Loaded your list</strong> — all {entries.length} cards already
+                    have a pick, so you're at the start. Change anything you like, or jump straight to your finished
+                    list with <strong style={{ color: TEXT }}>Resume later</strong>.
+                  </>
+                ) : (
+                  <>
+                    <strong style={{ color: TEXT }}>Resumed</strong> — {resumeNotice.chosenCount} card
+                    {resumeNotice.chosenCount === 1 ? "" : "s"} already picked. Jumped to card{" "}
+                    {resumeNotice.startIndex + 1}, the first one still open. Use{" "}
+                    <strong style={{ color: TEXT }}>Back</strong> anytime to revisit an earlier pick.
+                  </>
+                )}
+              </span>
+              <button
+                onClick={() => setResumeNotice(null)}
+                title="Dismiss"
+                style={{
+                  flexShrink: 0,
+                  background: "transparent",
+                  border: "none",
+                  color: SUBTEXT,
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "flex",
+                }}
+              >
+                <X size={15} />
+              </button>
+            </div>
+          )}
           <h2 className="fraunces" style={{ fontSize: 30, fontWeight: 700, margin: "0 0 4px" }}>{name}</h2>
 
           {isDropped && (
@@ -1733,6 +1831,9 @@ export default function App() {
     const outputText =
       outputTab === "archidekt" ? archidektText : outputTab === "manapool" ? manaPoolText : searchText;
     const hasRepeats = lines.some((l) => !l.missing && !l.basic && l.qty > 1);
+    // Cards with no pick yet (excludes basics, which are intentionally left to
+    // any printing). Non-zero means this is a partial/resume list.
+    const notPicked = lines.filter((l) => l.auto).length;
 
     const copy = async () => {
       try {
@@ -1759,6 +1860,11 @@ export default function App() {
             </span>
             {unresolved > 0 && (
               <span style={{ color: ACCENT }}> · {unresolved} card{unresolved === 1 ? "" : "s"} not found</span>
+            )}
+            {notPicked > 0 && (
+              <span title="Cards with no pick yet — shown name-only in the Archidekt list, and estimated at the cheapest printing everywhere else.">
+                {" "}· {notPicked} not picked yet
+              </span>
             )}
             {droppedCards.size > 0 && (
               <span> · {droppedCards.size} dropped</span>
@@ -1805,6 +1911,13 @@ export default function App() {
             </p>
           )}
 
+          {outputTab === "archidekt" && notPicked > 0 && (
+            <p className="mono" style={{ color: TEAL, fontSize: 11, letterSpacing: "0.01em", margin: "0 0 8px" }}>
+              {notPicked} card{notPicked === 1 ? "" : "s"} you haven't picked show as name only. Copy this whole
+              list and paste it back on the home page to resume where you left off.
+            </p>
+          )}
+
           <textarea
             readOnly
             value={outputText}
@@ -1830,7 +1943,9 @@ export default function App() {
                 Format is <span className="mono">1x name (set) 123 *F*</span>, matching Archidekt and Moxfield text
                 import. The finish you picked rides along — <span className="mono">*F*</span> for foil,{" "}
                 <span className="mono">*E*</span> for etched — so foils import as foils. In Archidekt, use{" "}
-                <strong style={{ color: TEXT }}>Import → Text</strong> and paste this in.
+                <strong style={{ color: TEXT }}>Import → Text</strong> and paste this in. Cards you haven't picked
+                appear as name only, so this same list doubles as your <strong style={{ color: TEXT }}>resume</strong>{" "}
+                list — paste it back on the home page anytime to continue where you left off.
               </>
             ) : outputTab === "manapool" ? (
               <>
