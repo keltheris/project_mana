@@ -513,14 +513,28 @@ export default function App() {
       if (Object.keys(finMap).length) seededFinishes[name] = finMap;
     }
 
-    // Resume: drop the user on the first card that still has no pick, so a
-    // saved (partly-chosen) list picks up where they left off instead of
-    // making them page past everything they already did. If every card is
-    // already chosen, there's nothing to resume — start at the beginning so
-    // they can review or redo. A fully fresh list also lands on index 0.
+    // Resume: drop the user on the first card that still needs a real
+    // decision, so a saved (partly-chosen) list picks up where they left off
+    // instead of making them page past everything they already did. Basic
+    // lands are skipped as a stopping point — their art is left to "any
+    // printing" unless deliberately picked — so resume never dumps you back
+    // onto an Island. If every non-basic card is already chosen there's
+    // nothing to resume to; start at the beginning so they can review or redo.
+    // A fully fresh list (nothing pre-chosen) also just lands on index 0.
     const chosenCount = Object.keys(seededSelections).length;
-    let resumeIndex = parsed.findIndex((e) => !seededSelections[e.name]?.size);
-    if (resumeIndex < 0) resumeIndex = 0;
+    const isResume = chosenCount > 0;
+    let resumeIndex = 0;
+    if (isResume) {
+      const firstOpen = parsed.findIndex((e) => !seededSelections[e.name]?.size && !isBasicLand(e.name));
+      resumeIndex = firstOpen < 0 ? 0 : firstOpen;
+    }
+    // Basics jumped over to reach that landing card, so the banner can offer a
+    // way back to them. Everything un-chosen before the landing card is a
+    // basic by construction (resumeIndex is the first un-chosen non-basic).
+    const skippedBasics = [];
+    for (let i = 0; i < resumeIndex; i++) {
+      if (!seededSelections[parsed[i].name]?.size && isBasicLand(parsed[i].name)) skippedBasics.push(i);
+    }
 
     // A fresh compile starts every per-card decision from a clean slate (plus
     // whatever the pasted list pre-seeded), so re-running never leaves stale
@@ -532,8 +546,14 @@ export default function App() {
     setDroppedCards(new Set());
     setPriorityDisabledCards(new Set());
     setResumeNotice(
-      chosenCount > 0
-        ? { startIndex: resumeIndex, chosenCount, allChosen: chosenCount === parsed.length }
+      isResume
+        ? {
+            startIndex: resumeIndex,
+            chosenCount,
+            allChosen: chosenCount === parsed.length,
+            skippedBasics,
+            firstBasicIndex: skippedBasics.length ? skippedBasics[0] : null,
+          }
         : null
     );
     setProgress({ done: parsed.length, total: parsed.length, current: "" });
@@ -1151,7 +1171,7 @@ export default function App() {
                 margin: "6px 0 14px",
               }}
             >
-              <span style={{ fontSize: 12.5, color: SUBTEXT, lineHeight: 1.5 }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: SUBTEXT, lineHeight: 1.5 }}>
                 {resumeNotice.allChosen ? (
                   <>
                     <strong style={{ color: TEXT }}>Loaded your list</strong> — all {entries.length} cards already
@@ -1166,7 +1186,33 @@ export default function App() {
                     <strong style={{ color: TEXT }}>Back</strong> anytime to revisit an earlier pick.
                   </>
                 )}
-              </span>
+                {resumeNotice.skippedBasics?.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    Skipped {resumeNotice.skippedBasics.length} basic land
+                    {resumeNotice.skippedBasics.length === 1 ? "" : "s"} — you don't normally pick their art.{" "}
+                    <button
+                      onClick={() => {
+                        setReviewIndex(resumeNotice.firstBasicIndex);
+                        setVisibleCount(24);
+                        setResumeNotice(null);
+                      }}
+                      className="inter"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: TEAL,
+                        padding: 0,
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Go to {resumeNotice.skippedBasics.length === 1 ? "it" : "them"}
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => setResumeNotice(null)}
                 title="Dismiss"
