@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en" data-theme="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acquisition Tracker</title>
+<style>
+:root{
+  --bg:#f5f6f9; --surface:#ffffff; --surface-2:#f0f1f6; --text:#1b1d29;
+  --muted:#6c7186; --faint:#9aa0b4; --border:#e4e6ee; --border-strong:#d3d6e2;
+  --accent:#6d4aff; --accent-weak:#efeaff; --accent-text:#5a34ff;
+  --ok:#1f9d63;
+  --shadow:0 1px 2px rgba(20,22,40,.06),0 8px 24px rgba(20,22,40,.06);
+  --foil-a:#7af0ff; --foil-b:#c78bff; --foil-c:#ff9ad5; --foil-d:#8bffc0;
+  --etched:#caa15a; --etched-2:#8a6a2f;
+  --red:#e0524f; --yellow:#e0a92b; --green:#22b978;
+}
+:root[data-theme="dark"]{
+  --bg:#101119; --surface:#191b26; --surface-2:#1f2130; --text:#e7e8f0;
+  --muted:#9a9fb6; --faint:#6b7089; --border:#2a2d3d; --border-strong:#363a4e;
+  --accent:#9d86ff; --accent-weak:#241d3f; --accent-text:#b6a5ff;
+  --ok:#43c98a; --etched:#e0bd7c;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101119; --surface:#191b26; --surface-2:#1f2130; --text:#e7e8f0;
+    --muted:#9a9fb6; --faint:#6b7089; --border:#2a2d3d; --border-strong:#363a4e;
+    --accent:#9d86ff; --accent-weak:#241d3f; --accent-text:#b6a5ff;
+    --ok:#43c98a; --etched:#e0bd7c;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg); color:var(--text);
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--accent-text); text-decoration:none}
+a:hover{text-decoration:underline}
+
+.toolbar{position:sticky; top:0; z-index:20; background:var(--surface);
+  border-bottom:1px solid var(--border); display:flex; align-items:center; gap:16px;
+  padding:12px 22px; flex-wrap:wrap}
+.brand{display:flex; flex-direction:column; gap:2px; margin-right:4px}
+.brand h1{font-size:17px; font-weight:650; margin:0; letter-spacing:-.01em}
+.brand .sub{font-size:11.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.09em}
+.meter{display:flex; align-items:center; gap:12px}
+.bar{width:150px; height:8px; border-radius:99px; background:var(--surface-2);
+  border:1px solid var(--border); overflow:hidden}
+.bar>span{display:block; height:100%; width:0;
+  background:linear-gradient(90deg,var(--accent),var(--accent-text)); transition:width .25s ease}
+.counts{display:flex; gap:8px; flex-wrap:wrap}
+.chip{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:99px;
+  background:var(--surface-2); border:1px solid var(--border); font-size:12px; color:var(--muted); white-space:nowrap}
+.chip b{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
+.chip .dot{width:8px;height:8px;border-radius:99px}
+.chip.buy .dot{background:var(--yellow)}.chip.got .dot{background:var(--ok)}.chip.slot .dot{background:var(--accent)}
+.spacer{flex:1}
+.btn{appearance:none; border:1px solid var(--border-strong); background:var(--surface);
+  color:var(--text); padding:8px 12px; border-radius:9px; font-size:13px; font-weight:550;
+  cursor:pointer; display:inline-flex; align-items:center; gap:7px}
+.btn:hover{background:var(--surface-2)}
+.btn .ic{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+.wrap{max-width:1240px; margin:22px auto 12px; padding:0 22px}
+
+/* ---------- desktop table ---------- */
+table{width:100%; border-collapse:separate; border-spacing:0; background:var(--surface);
+  border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:var(--shadow)}
+thead th{position:sticky; top:57px; z-index:10; background:var(--surface); text-align:left;
+  font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
+  font-weight:600; padding:11px 14px; border-bottom:1px solid var(--border)}
+thead th.sortable{cursor:pointer; user-select:none}
+thead th.sortable:hover{color:var(--text)}
+thead th .arrow{opacity:0; font-size:10px; margin-left:4px}
+thead th.active{color:var(--accent-text)}
+thead th.active .arrow{opacity:1}
+th.c-check,td.c-check{text-align:center; width:84px}
+th.c-link,td.c-link{text-align:center; width:52px}
+th.c-cat,td.c-cat{width:150px}
+th.c-swap,td.c-swap{width:172px}
+table:not(.showswap) .c-swap{display:none}
+.cutname{color:var(--muted); text-decoration:line-through; text-decoration-color:var(--faint)}
+tbody td{padding:9px 14px; border-bottom:1px solid var(--border); vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.card:hover{background:var(--surface-2)}
+tr.section td{padding:15px 14px 8px; background:var(--surface-2);
+  border-top:1px solid var(--border); border-bottom:1px solid var(--border)}
+tr.section:first-child td{border-top:0}
+tr.section h2{margin:0; font-size:13.5px; font-weight:750; letter-spacing:.04em; text-transform:uppercase; color:var(--text); display:inline}
+tr.section .s-count{font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums; margin-left:10px}
+.tag{display:inline-block; padding:2px 9px; border-radius:6px; background:var(--surface-2);
+  border:1px solid var(--border); color:var(--muted); font-size:11.5px; font-weight:550; white-space:nowrap}
+.tag.cut{border-style:dotted; border-width:1.5px; border-color:var(--red); color:var(--red); background:transparent;
+  display:inline-flex; align-items:center; gap:5px}
+.tag.cut svg{width:11px; height:11px; stroke:currentColor; fill:none; stroke-width:1.7}
+.tag.cut.cutdone{background:var(--red); border-style:solid; border-color:var(--red); color:#fff}
+.swapname{display:inline-flex; align-items:center; padding:2px 9px; border-radius:6px; border:1px solid var(--border-strong); font-weight:560}
+.swapname.s-buy{background:rgba(224,169,43,.16); border-color:var(--yellow)}
+.swapname.s-got{background:rgba(52,185,120,.16); border-color:var(--ok)}
+.cardcell{display:flex; align-items:center; gap:9px}
+.qty{font-variant-numeric:tabular-nums; color:var(--faint); font-size:12.5px; min-width:20px}
+.name{font-weight:530; cursor:default}
+.badge{font-size:9.5px; font-weight:750; letter-spacing:.06em; padding:2px 6px; border-radius:5px; line-height:1}
+.badge.foil{color:#0a2230; background:linear-gradient(110deg,var(--foil-a),var(--foil-b),var(--foil-c),var(--foil-d))}
+.badge.etched{color:#241703; background:linear-gradient(110deg,var(--etched),var(--etched-2))}
+.badge.variant{color:var(--muted); background:var(--surface-2); border:1px solid var(--border); font-weight:600}
+
+/* store logos (placeholder monograms — swap for brand SVGs) */
+.logo{display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:26px;
+  padding:0 7px; border-radius:7px; color:#fff; font-size:10.5px; font-weight:750; letter-spacing:.02em}
+.logo.tcg{background:#1f5fbf}.logo.mp{background:#0f9088}.logo.ck{background:#17265c}
+.logo:hover{filter:brightness(1.12); text-decoration:none}
+.logo.dead{background:var(--surface-2); color:var(--faint); border:1px solid var(--border)}
+
+/* tri-state */
+.tri{appearance:none; cursor:pointer; width:26px; height:26px; border-radius:7px;
+  border:1.6px solid var(--border-strong); background:var(--surface); position:relative; padding:0; transition:.12s}
+.tri:hover{border-color:var(--accent)}
+.tri[data-s="1"]{background:var(--accent); border-color:var(--accent)}
+.tri[data-s="1"]::after{content:""; position:absolute; left:8px; top:4px; width:6px; height:11px;
+  border:solid #fff; border-width:0 2.2px 2.2px 0; transform:rotate(42deg)}
+.tri[data-s="2"]{border-color:var(--accent); background:var(--accent-weak)}
+.tri[data-s="2"]::after{content:""; position:absolute; left:5px; top:11px; width:14px; height:2.4px; border-radius:2px; background:var(--accent-text)}
+.tri.buy[data-s="1"]{background:var(--yellow);border-color:var(--yellow)}
+.tri.buy[data-s="2"]{border-color:var(--yellow);background:rgba(224,169,43,.15)}
+.tri.buy[data-s="2"]::after{background:var(--yellow)}
+.tri.got[data-s="1"]{background:var(--ok);border-color:var(--ok)}
+.tri.got[data-s="2"]{border-color:var(--ok);background:rgba(52,185,120,.15)}
+.tri.got[data-s="2"]::after{background:var(--ok)}
+
+/* ---------- mobile list ---------- */
+.mlist{display:none; background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; overflow:hidden; box-shadow:var(--shadow)}
+.msection{display:flex; justify-content:space-between; align-items:baseline; padding:12px 14px 8px;
+  background:var(--surface-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+  font-size:12.5px; font-weight:750; text-transform:uppercase; letter-spacing:.04em}
+.msection:first-child{border-top:0}
+.msection span{font-weight:500; color:var(--faint); font-size:11.5px}
+.mrow{display:flex; flex-direction:column; gap:8px; padding:12px 14px; border-bottom:1px solid var(--border)}
+.mrow:last-child{border-bottom:0}
+.mtop{display:flex; align-items:flex-start; justify-content:space-between; gap:12px}
+.mname{font-weight:580; font-size:14.5px; display:flex; align-items:center; gap:7px; flex-wrap:wrap; min-width:0}
+.mstores{display:flex; gap:5px; flex:0 0 auto}
+.mmeta{display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; color:var(--muted)}
+.mmeta .cutlbl{color:var(--faint); text-transform:uppercase; font-size:10.5px; letter-spacing:.05em}
+.mmeta .dotsep{color:var(--faint)}
+.mstatus{display:flex; gap:8px; margin-top:2px; flex-wrap:wrap}
+.mstatus .tri{width:28px; height:28px}
+.stcell{display:flex; align-items:center; gap:7px; padding:5px 11px 5px 6px; border:1px solid var(--border); border-radius:9px; background:var(--surface-2)}
+.stlbl{font-size:12px; color:var(--muted); font-weight:550}
+.mctl{align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:12px}
+.mctl-lbl{font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); margin-right:2px}
+.mtoggle{appearance:none; cursor:pointer; border:1px solid var(--border-strong); background:var(--surface);
+  color:var(--muted); font-size:12.5px; font-weight:600; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:7px}
+.mtoggle::before{content:""; width:14px; height:14px; border-radius:4px; border:1.6px solid var(--border-strong)}
+.mtoggle.on{border-color:var(--accent); color:var(--accent-text); background:var(--accent-weak)}
+.mtoggle.on::before{background:var(--accent); border-color:var(--accent)}
+
+/* ---------- mass entry ---------- */
+.massentry{max-width:1240px; margin:0 auto; padding:0 22px 30px}
+.me-card{border:1px solid var(--border); border-radius:12px; background:var(--surface); overflow:hidden}
+.me-head{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 14px; cursor:pointer}
+.me-head h3{margin:0; font-size:13px; font-weight:650}
+.me-head .hint{font-size:11.5px; color:var(--faint)}
+.me-body{border-top:1px solid var(--border)}
+.me-tabs{display:flex; gap:6px; flex-wrap:wrap; padding:12px 14px 0}
+.me-tab{appearance:none; cursor:pointer; border:1px solid var(--border-strong); background:var(--surface);
+  color:var(--muted); font-size:12px; font-weight:600; padding:5px 11px; border-radius:7px}
+.me-tab.active{border-color:var(--accent); color:var(--accent-text); background:var(--accent-weak)}
+.me-pane{position:relative; padding:12px 14px 14px}
+.me-pane textarea{width:100%; height:150px; resize:vertical; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:8px; color:var(--text);
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; padding:11px 12px}
+.me-copy{position:absolute; right:22px; top:20px; z-index:2; appearance:none; cursor:pointer;
+  border:1px solid var(--border-strong); background:var(--surface); color:var(--text);
+  font-size:12px; font-weight:600; padding:5px 11px; border-radius:7px; display:inline-flex; gap:6px; align-items:center}
+.me-copy:hover{background:var(--surface-2)}
+.me-copy.done{border-color:var(--ok); color:var(--ok)}
+
+.foot{max-width:1240px; margin:0 auto; padding:6px 22px 30px; color:var(--faint); font-size:12px}
+.legend{display:flex; gap:16px; flex-wrap:wrap; align-items:center}
+.legend .k{display:inline-flex;align-items:center;gap:6px}
+.legend .sw{width:16px;height:16px;border-radius:5px;border:1.6px solid var(--border-strong)}
+.legend .sw.full{background:var(--accent);border-color:var(--accent)}
+.legend .sw.part{background:var(--accent-weak);border-color:var(--accent)}
+.legend .sw.r{background:var(--red);border:0}.legend .sw.y{background:var(--yellow);border:0}.legend .sw.g{background:var(--green);border:0}
+.mobileonly{display:none}
+
+.art-tip{position:fixed; z-index:60; pointer-events:none; filter:drop-shadow(0 12px 28px rgba(0,0,0,.4)); transform:translate(-50%,0)}
+.art-tip img{width:220px; border-radius:12px; display:block}
+.art-tip.hide{display:none}
+
+/* ---------- responsive switch ---------- */
+@media (max-width:720px){
+  #tbl{display:none}
+  .mlist{display:block}
+  .wrap{padding:0 12px; margin:14px auto 12px}
+  .massentry{padding:0 12px 26px}
+  .foot{padding:6px 12px 26px}
+  .toolbar{padding:10px 12px; gap:10px}
+  .brand .sub{display:none}
+  .btn .lbl{display:none}
+  .btn{padding:8px}
+  .desktoponly{display:none}
+  .mobileonly{display:flex}
+  .meter .counts{display:none}
+}
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <div class="brand"><h1 id="deckName">Acquisition Tracker</h1><span class="sub">Acquisition Tracker</span></div>
+  <div class="meter">
+    <div class="bar"><span id="progFill"></span></div>
+    <div class="counts">
+      <span class="chip buy"><span class="dot"></span>Bought <b id="cBuy">0</b></span>
+      <span class="chip got"><span class="dot"></span>Acquired <b id="cGot">0</b></span>
+      <span class="chip slot"><span class="dot"></span>Slotted <b id="cSlot">0</b></span>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="themeBtn" title="Toggle light / dark">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg><span class="lbl">Theme</span>
+  </button>
+  <button class="btn" id="saveBtn">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span class="lbl">Save a copy</span>
+  </button>
+  <button class="btn" id="resetBtn">
+    <svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg><span class="lbl">Reset</span>
+  </button>
+</header>
+
+<div class="wrap">
+  <table id="tbl">
+    <thead><tr>
+      <th class="c-card sortable" data-key="name">Card <span class="arrow">▲</span></th>
+      <th class="c-swap">Cut</th>
+      <th class="c-cat sortable" data-key="cat">Category <span class="arrow">▲</span></th>
+      <th class="c-link">TCG</th>
+      <th class="c-link">MP</th>
+      <th class="c-link">CK</th>
+      <th class="c-check buy">Bought</th>
+      <th class="c-check got">Acquired</th>
+      <th class="c-check slot">Slotted</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="mctl mobileonly" id="mctl"></div>
+  <div class="mlist" id="mlist"></div>
+</div>
+
+<section class="massentry">
+  <div class="me-card">
+    <div class="me-head" id="meHead">
+      <h3>Mass-entry lists</h3>
+      <span class="hint">tap a tab, then Copy — paste into the store's bulk add</span>
+    </div>
+    <div class="me-body" id="meBody">
+      <div class="me-tabs" id="meTabs"></div>
+      <div class="me-pane">
+        <button class="me-copy" id="meCopy">Copy</button>
+        <textarea id="meText" readonly spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="foot">
+  <div class="legend desktoponly">
+    <span class="k"><span class="sw"></span>None</span>
+    <span class="k"><span class="sw part"></span>Some (partial — multi-copy)</span>
+    <span class="k"><span class="sw full"></span>Done</span>
+    <span class="k" style="margin-left:auto">Hover a card name for its art · saved locally · art needs internet</span>
+  </div>
+  <div class="legend mobileonly">
+    <span class="k"><span class="sw"></span>None</span>
+    <span class="k"><span class="sw part"></span>Some (multi-copy)</span>
+    <span class="k"><span class="sw full"></span>Done</span>
+    <span class="k" style="margin-left:auto">tap a box to mark · saved locally</span>
+  </div>
+</div>
+
+<div class="art-tip hide" id="artTip"><img alt=""></div>
+
+<script id="tracker-state" type="application/json">null</script>
+<script>
+/* ==== data: one JSON blob injected by the generator ==== */
+const DATA = {{DATA}};
+
+const SECTIONS=[["maindeck","Maindeck"],["sideboard","Sideboard"],["maybeboard","Swaps"]];
+const COLS=["buy","got","slot"];
+const KEY="tracker:"+(DATA.deck_name||"deck");
+const rowId=r=>[r.name,r.set||"",r.cn||"",r.finish||""].join("|");
+
+function loadState(){
+  const baked=document.getElementById("tracker-state").textContent.trim(); let s={};
+  try{const b=JSON.parse(baked); if(b) s=b;}catch(e){}
+  try{const l=JSON.parse(localStorage.getItem(KEY)); if(l) s=Object.assign(s,l);}catch(e){}
+  return s;
+}
+let state=loadState();
+const getS=(id,c)=>(state[id]&&state[id][c])||0;
+function setS(id,c,v){(state[id]=state[id]||{})[c]=v; if(!v) delete state[id][c];
+  try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}}
+
+/* mobile show/hide preferences */
+const PKEY="tracker-prefs:"+(DATA.deck_name||"deck");
+let prefs={cat:true,cut:true,stores:true};
+try{const p=JSON.parse(localStorage.getItem(PKEY)); if(p) prefs=Object.assign(prefs,p);}catch(e){}
+function savePrefs(){try{localStorage.setItem(PKEY,JSON.stringify(prefs));}catch(e){}}
+
+const slug=n=>n.toLowerCase().split("//")[0].trim().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+const mpUrl=r=>r.manapool_url||("https://manapool.com/card/"+slug(r.name));
+const ckUrl=r=>r.ck_url||("https://www.cardkingdom.com/catalog/search?search=header&filter%5Bname%5D="+encodeURIComponent(r.name.split("//")[0].trim()));
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":s;return d.innerHTML;}
+function storeLink(kind,r){
+  const map={tcg:["TCG",r.tcg_url],mp:["MP",mpUrl(r)],ck:["CK",ckUrl(r)]};
+  const [label,href]=map[kind];
+  return href?`<a class="logo ${kind}" href="${esc(href)}" target="_blank" rel="noopener">${label}</a>`
+             :`<span class="logo ${kind} dead">${label}</span>`;
+}
+function badges(r){
+  return (r.finish==="foil"?'<span class="badge foil">FOIL</span>':"")+
+         (r.finish==="etched"?'<span class="badge etched">ETCHED</span>':"")+
+         (r.variant?`<span class="badge variant">${esc(r.variant)}</span>`:"");
+}
+const SCISSORS='<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>';
+function nameHtml(r,id){
+  const inner=`<span class="name" data-img="${esc(r.image||"")}">${esc(r.name)}</span>`;
+  if(r.cut){
+    const st=getS(id,"got")===1?"s-got":getS(id,"buy")===1?"s-buy":"";
+    return `<span class="swapname ${st}">${inner}</span>${badges(r)}`;
+  }
+  return inner+badges(r);
+}
+function cutTag(r,id){
+  if(!r.cut) return '<span style="color:var(--faint)">—</span>';
+  return `<span class="tag cut${getS(id,"slot")===1?" cutdone":""}">${SCISSORS}${esc(r.cut)}</span>`;
+}
+
+let sortKey="cat", sortDir=1;
+const rowsFor=sec=>(DATA.rows||[]).filter(r=>(r.section||"maindeck")===sec);
+function sortRows(rs){
+  return rs.slice().sort((a,b)=>{
+    if(sortKey==="cat"){
+      const aC=a.category==="Commander",bC=b.category==="Commander"; if(aC!==bC)return aC?-1:1;
+      const c=(a.category||"~~~").localeCompare(b.category||"~~~"); if(c)return sortDir*c;
+      return a.name.localeCompare(b.name);
+    }
+    return sortDir*a.name.localeCompare(b.name);
+  });
+}
+
+/* ---- single mobile status derived from the tri-states ---- */
+function statusColor(id){ if(getS(id,"slot")===1)return "green"; if(getS(id,"got")===1)return "yellow"; return "red"; }
+function cycleStatus(id){
+  const c=statusColor(id);
+  if(c==="red"){ setS(id,"buy",1); setS(id,"got",1); setS(id,"slot",0); }
+  else if(c==="yellow"){ setS(id,"slot",1); }
+  else { setS(id,"buy",0); setS(id,"got",0); setS(id,"slot",0); }
+}
+
+function render(){
+  document.title=(DATA.deck_name?DATA.deck_name+" — ":"")+"Acquisition Tracker";
+  document.getElementById("deckName").textContent=DATA.deck_name||"Acquisition Tracker";
+  document.getElementById("tbl").classList.toggle("showswap",(DATA.rows||[]).some(r=>r.cut));
+  renderDesktop(); renderMobile(); updateMeter(); updateSort();
+}
+
+function renderDesktop(){
+  const tb=document.getElementById("rows"); tb.innerHTML=""; let any=false;
+  for(const [sec,label] of SECTIONS){
+    const rs=rowsFor(sec); if(!rs.length) continue; any=true;
+    const total=rs.reduce((a,r)=>a+(r.qty||1),0);
+    const s=document.createElement("tr"); s.className="section";
+    s.innerHTML=`<td colspan="9"><h2>${esc(label)}</h2><span class="s-count">${rs.length} cards · ${total} copies</span></td>`;
+    tb.appendChild(s);
+    sortRows(rs).forEach(r=>{
+      const id=rowId(r);
+      const tr=document.createElement("tr"); tr.className="card";
+      const cut=cutTag(r,id);
+      tr.innerHTML=
+        `<td class="c-card"><div class="cardcell"><span class="qty">${r.qty>1?r.qty+"×":""}</span>${nameHtml(r,id)}</div></td>`+
+        `<td class="c-swap">${cut}</td>`+
+        `<td class="c-cat">${r.category?`<span class="tag">${esc(r.category)}</span>`:'<span style="color:var(--faint)">—</span>'}</td>`+
+        `<td class="c-link">${storeLink("tcg",r)}</td><td class="c-link">${storeLink("mp",r)}</td><td class="c-link">${storeLink("ck",r)}</td>`+
+        COLS.map(c=>`<td class="c-check ${c}"><button class="tri ${c}" data-s="${getS(id,c)}" data-id="${esc(id)}" data-c="${c}"></button></td>`).join("");
+      tb.appendChild(tr);
+    });
+  }
+  if(!any) tb.innerHTML='<tr><td colspan="9" style="padding:26px;color:var(--faint)">No cards.</td></tr>';
+}
+
+function renderMobile(){
+  const ml=document.getElementById("mlist"); ml.innerHTML="";
+  for(const [sec,label] of SECTIONS){
+    const rs=rowsFor(sec); if(!rs.length) continue;
+    const total=rs.reduce((a,r)=>a+(r.qty||1),0);
+    const h=document.createElement("div"); h.className="msection";
+    h.innerHTML=`<span style="color:var(--text)">${esc(label)}</span><span>${rs.length} cards · ${total} copies</span>`;
+    ml.appendChild(h);
+    sortRows(rs).forEach(r=>{
+      const id=rowId(r);
+      const meta=[];
+      if(prefs.cat && r.category) meta.push(`<span class="tag">${esc(r.category)}</span>`);
+      if(prefs.cut && r.cut) meta.push(`<span class="cutlbl">cut</span> ${cutTag(r,id)}`);
+      const status=COLS.map(c=>{
+        const lbl={buy:"Bought",got:"Acquired",slot:"Slotted"}[c];
+        return `<span class="stcell"><button class="tri ${c}" data-s="${getS(id,c)}" data-id="${esc(id)}" data-c="${c}"></button><span class="stlbl">${lbl}</span></span>`;
+      }).join("");
+      const stores=prefs.stores?`<div class="mstores">${storeLink("tcg",r)}${storeLink("mp",r)}${storeLink("ck",r)}</div>`:"";
+      const row=document.createElement("div"); row.className="mrow";
+      row.innerHTML=
+        `<div class="mtop"><div class="mname">${r.qty>1?`<span class="qty">${r.qty}×</span>`:""}${nameHtml(r,id)}</div>`+
+        stores+`</div>`+
+        (meta.length?`<div class="mmeta">${meta.join('<span class="dotsep">·</span>')}</div>`:"")+
+        `<div class="mstatus">${status}</div>`;
+      ml.appendChild(row);
+    });
+  }
+}
+
+function updateMeter(){
+  const rows=DATA.rows||[]; let buy=0,got=0,slot=0;
+  for(const r of rows){const id=rowId(r);
+    if(getS(id,"buy")===1)buy++; if(getS(id,"got")===1)got++; if(getS(id,"slot")===1)slot++;}
+  document.getElementById("cBuy").textContent=buy;
+  document.getElementById("cGot").textContent=got+"/"+rows.length;
+  document.getElementById("cSlot").textContent=slot+"/"+rows.length;
+  document.getElementById("progFill").style.width=Math.round(slot/(rows.length||1)*100)+"%";
+}
+function updateSort(){
+  document.querySelectorAll("thead th.sortable").forEach(th=>{
+    const on=th.dataset.key===sortKey; th.classList.toggle("active",on);
+    th.querySelector(".arrow").textContent=(on&&sortDir<0)?"▼":"▲";
+  });
+}
+
+/* ---- mass entry ---- */
+let meTab="Archidekt";
+function meLists(){
+  const rows=DATA.rows||[];
+  const tag=r=> r.section==="sideboard"?" [Sideboard{noDeck}]"
+    : r.section==="maybeboard"?" [Maybeboard{noDeck}]"
+    : r.category==="Commander"?" [Commander{top}]"
+    : r.category?` [${r.category}]`:"";
+  const plain=rows.map(r=>`${r.qty||1} ${r.name}`).join("\n");
+  return {Archidekt:rows.map(r=>`${r.qty||1} ${r.name}${tag(r)}`).join("\n"),
+          "Card Kingdom":plain, "Mana Pool":plain};
+}
+function buildMctl(){
+  const items=[["cat","Category"],["cut","Cut"],["stores","Links"]];
+  document.getElementById("mctl").innerHTML=`<span class="mctl-lbl">Show</span>`+
+    items.map(([k,l])=>`<button class="mtoggle${prefs[k]?" on":""}" data-k="${k}">${l}</button>`).join("");
+}
+function buildMassEntry(){
+  const lists=meLists(), tabs=document.getElementById("meTabs");
+  tabs.innerHTML=Object.keys(lists).map(k=>`<button class="me-tab${k===meTab?" active":""}" data-tab="${esc(k)}">${esc(k)}</button>`).join("");
+  document.getElementById("meText").value=lists[meTab]||"";
+}
+
+/* ---- interactions ---- */
+function onTri(e){
+  const t=e.target.closest(".tri"); if(!t)return;
+  setS(t.dataset.id,t.dataset.c,(+t.dataset.s+1)%3);
+  renderDesktop(); renderMobile(); updateMeter();
+}
+document.getElementById("rows").addEventListener("click",onTri);
+document.getElementById("mlist").addEventListener("click",onTri);
+document.getElementById("mctl").addEventListener("click",e=>{
+  const b=e.target.closest(".mtoggle"); if(!b)return;
+  prefs[b.dataset.k]=!prefs[b.dataset.k]; savePrefs(); buildMctl(); renderMobile();
+});
+document.querySelectorAll("thead th.sortable").forEach(th=>{
+  th.addEventListener("click",()=>{
+    const k=th.dataset.key; if(k===sortKey) sortDir*=-1; else { sortKey=k; sortDir=1; }
+    render();
+  });
+});
+document.getElementById("meTabs").addEventListener("click",e=>{
+  const b=e.target.closest(".me-tab"); if(!b)return; meTab=b.dataset.tab; buildMassEntry();
+});
+function copyText(){
+  const ta=document.getElementById("meText"), btn=document.getElementById("meCopy");
+  ta.select(); ta.setSelectionRange(0,99999);
+  let ok=false; try{ok=document.execCommand("copy");}catch(e){}
+  if(navigator.clipboard) navigator.clipboard.writeText(ta.value).catch(()=>{});
+  btn.textContent="Copied!"; btn.classList.add("done");
+  setTimeout(()=>{btn.textContent="Copy"; btn.classList.remove("done");},1400);
+  window.getSelection().removeAllRanges();
+}
+document.getElementById("meCopy").addEventListener("click",copyText);
+document.getElementById("meText").addEventListener("click",copyText);
+
+/* art hover (desktop) */
+const tip=document.getElementById("artTip"), tipImg=tip.querySelector("img");
+document.getElementById("rows").addEventListener("mouseover",e=>{
+  const n=e.target.closest(".name"); if(!n||!n.dataset.img)return;
+  tipImg.src=n.dataset.img; tip.classList.remove("hide");
+});
+document.getElementById("rows").addEventListener("mousemove",e=>{
+  if(tip.classList.contains("hide"))return;
+  tip.style.left=Math.min(e.clientX+20,innerWidth-230)+"px";
+  tip.style.top=Math.max(10,Math.min(e.clientY-40,innerHeight-320))+"px";
+});
+document.getElementById("rows").addEventListener("mouseout",e=>{ if(e.target.closest(".name")) tip.classList.add("hide"); });
+
+document.getElementById("themeBtn").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme");
+  const dark=cur==="dark"||(cur!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme",dark?"light":"dark");
+});
+document.getElementById("saveBtn").addEventListener("click",()=>{
+  document.getElementById("tracker-state").textContent=JSON.stringify(state);
+  const blob=new Blob(["<!doctype html>\n"+document.documentElement.outerHTML],{type:"text/html"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=slug(DATA.deck_name||"deck")+"-tracker.html"; a.click(); URL.revokeObjectURL(a.href);
+});
+document.getElementById("resetBtn").addEventListener("click",()=>{
+  if(!confirm("Clear all Bought / Acquired / Slotted marks?"))return;
+  state={}; try{localStorage.removeItem(KEY);}catch(e){}
+  document.getElementById("tracker-state").textContent="null"; render();
+});
+
+buildMctl();
+buildMassEntry();
+render();
+</script>
+</body>
+</html>

@@ -1,7 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home, XCircle, Bookmark } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Check, Loader2, Copy, RotateCcw, SkipForward, AlertTriangle, ExternalLink, ZoomIn, X, Home, XCircle, Bookmark, Download } from "lucide-react";
 import { ROOT_BG, PANEL_BG, ACCENT, TEAL, TEXT, SUBTEXT } from "./theme";
 import FeedbackWidget from "./FeedbackWidget";
+// Vendored copy of the shared acquisition-tracker template (Forge's coupling
+// surface — kept byte-identical; see src/tracker-template.html / SLOTS.md).
+// Imported as a raw string so we can inject the data slot and download it.
+import trackerTemplate from "./tracker-template.html?raw";
 
 const SAMPLE_LIST = `1 Kess, Dissident Mage
 1 Watery Grave
@@ -68,13 +72,16 @@ function priceForFinish(o, finishValue) {
   return p != null ? p : minPrice(o);
 }
 
-// Parses one decklist line into { qty, name, set, cn, finish }, tolerating
-// both this tool's own outputs and typical Archidekt / Moxfield / ManaPool
-// exports. Quantities may be "1" or Archidekt's "1x". A set + collector
-// number may be attached as Archidekt's "(set) 123" or ManaPool/TCGplayer's
-// "[SET] 123", and a foil/etched finish as "*F*" / "*E*". Every one of those
-// trailing annotations is stripped back off the name so the lookup still sees
-// just the card name; set/cn/finish come back null when absent.
+// Parses one decklist line into { qty, name, set, cn, finish, category },
+// tolerating both this tool's own outputs and typical Archidekt / Moxfield /
+// ManaPool exports. Quantities may be "1" or Archidekt's "1x". A set +
+// collector number may be attached as Archidekt's "(set) 123" or ManaPool/
+// TCGplayer's "[SET] 123", a foil/etched finish as "*F*" / "*E*", and an
+// Archidekt "[Category]" tag. Every one of those trailing annotations is
+// stripped back off the name so the lookup still sees just the card name;
+// set/cn/finish/category come back null when absent. The category rides
+// along invisibly (never shown while picking) and is re-emitted only in the
+// Archidekt output.
 function parseLine(raw) {
   let s = (raw || "").trim();
   if (!s) return null;
@@ -108,8 +115,15 @@ function parseLine(raw) {
     s = (s.slice(0, m.index) + s.slice(m.index + m[0].length)).trim();
   }
 
-  // Drop any leftover Archidekt category ([...]) or color-tag (^...^)
-  // annotation, then collapse the whitespace those removals leave behind.
+  // Capture an Archidekt category tag — the first [...] left after the set was
+  // pulled out. Skip our own "[NOT FOUND …]" marker so re-importing an
+  // unresolved line doesn't turn that note into a bogus category.
+  let category = null;
+  const catMatch = s.match(/\[([^\]]+)\]/);
+  if (catMatch && !/NOT FOUND/i.test(catMatch[1])) category = catMatch[1].trim();
+
+  // Drop any leftover category ([...]) or color-tag (^...^) annotation, then
+  // collapse the whitespace those removals leave behind.
   s = s
     .replace(/\[[^\]]*\]/g, " ")
     .replace(/\^+[^^]*\^+/g, " ")
@@ -118,7 +132,7 @@ function parseLine(raw) {
 
   const name = s.slice(0, MAX_NAME_LENGTH).trim();
   if (!name) return null;
-  return { qty, name, set, cn, finish };
+  return { qty, name, set, cn, finish, category };
 }
 
 // Aggregates parsed lines by card name (summing quantities, as before) while
@@ -130,10 +144,12 @@ function parseList(text) {
   for (const line of text.split("\n")) {
     const parsed = parseLine(line);
     if (!parsed) continue;
-    const { qty, name, set, cn, finish } = parsed;
-    const existing = map.get(name) || { name, qty: 0, prefs: [] };
+    const { qty, name, set, cn, finish, category } = parsed;
+    const existing = map.get(name) || { name, qty: 0, prefs: [], category: null };
     existing.qty = Math.min(existing.qty + qty, MAX_QTY);
     if (set && cn) existing.prefs.push({ set, cn, finish });
+    // A card belongs to one category; keep the first non-null we see for it.
+    if (category && !existing.category) existing.category = category;
     map.set(name, existing);
   }
   return Array.from(map.values());
@@ -246,12 +262,17 @@ function massEntryLine(l) {
 // back as un-chosen, so re-importing the whole thing drops the user back on
 // the first card they still need to decide, instead of treating the tool's
 // own cheapest guess as a real pick.
+//
+// An Archidekt "[Category]" tag the input carried is appended verbatim (only
+// here, not in the ManaPool/Search formats) so a categorized list round-trips
+// its categories — including on the name-only lines, so resume keeps them too.
 function archidektLine(l) {
+  const cat = l.category ? ` [${l.category}]` : "";
   if (l.missing) return `${l.qty}x ${l.name}   [NOT FOUND — verify manually]`;
-  if (l.basic || l.auto) return `${l.qty}x ${l.name}`;
+  if (l.basic || l.auto) return `${l.qty}x ${l.name}${cat}`;
   const fin = FINISHES.find((f) => f.value === l.finish);
   const suffix = fin && fin.indicator ? ` ${fin.indicator}` : "";
-  return `${l.qty}x ${l.name} (${(l.set || "").toLowerCase()}) ${l.cn}${suffix}`;
+  return `${l.qty}x ${l.name} (${(l.set || "").toLowerCase()}) ${l.cn}${suffix}${cat}`;
 }
 
 // Unlike the Mass Entry syntax, this doesn't need to exactly match a
@@ -320,6 +341,47 @@ function cardKingdomUrl(l) {
   if (!setSlug || !nameSlug) return null;
   const foil = l.finish === "foil" || l.finish === "etched" ? "-foil" : "";
   return `https://www.cardkingdom.com/mtg/${setSlug}/${nameSlug}${foil}`;
+}
+
+// Maps the finished deck's output lines to the shared acquisition-tracker's
+// data slot (see SLOTS.md). One row per (card, chosen printing) — the same
+// granularity buildOutput already produces. Nullable-safe: every field but
+// name/qty may be null and the template degrades. section / category /
+// manapool_url / ck_url / cut are intentionally left out per the integration
+// spec — the template fills its own MP/CK name-based links, defaults section
+// to Maindeck, and shows no category tag. (category rides on each line now, so
+// wiring it in is a one-line change if we later want the tracker grouped.)
+function buildTrackerData(lines) {
+  return {
+    deck_name: null,
+    source: "project-mana",
+    rows: lines.map((l) => ({
+      name: l.name,
+      qty: l.qty,
+      finish: l.finish || "nonfoil",
+      variant: l.treatment || null,
+      image: l.image || null,
+      tcg_url: l.tcgplayerId ? `https://www.tcgplayer.com/product/${l.tcgplayerId}` : null,
+      set: l.set || null,
+      cn: l.cn || null,
+    })),
+  };
+}
+
+// Fills the template's single {{DATA}} slot and hands the result to the user as
+// a downloaded .html file — mirrors the template's own "Save a copy". A replacer
+// function (not a plain string) is used so a `$` anywhere in the JSON can't be
+// read as a `$&`-style special in String.replace. The state slot is left as the
+// template ships it ("null"), so a freshly generated tracker starts blank.
+function downloadTracker(lines) {
+  const data = buildTrackerData(lines);
+  const html = trackerTemplate.replace("{{DATA}}", () => JSON.stringify(data));
+  const blob = new Blob([html], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "acquisition-tracker.html";
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // Generic, not qty-specific, so any future heads-up/caution note in the app
@@ -744,18 +806,21 @@ export default function App() {
     const lines = [];
     let total = 0;
     let unresolved = 0;
-    for (const { name, qty } of entries) {
+    // `category` (from an Archidekt-formatted input line) and `image` (the
+    // chosen printing's Scryfall image) ride on every line: category feeds the
+    // Archidekt output, image feeds the downloadable acquisition tracker.
+    for (const { name, qty, category } of entries) {
       if (droppedCards.has(name)) continue;
       const opts = printOptions[name] || [];
       const sel = selections[name] ? Array.from(selections[name]) : [];
       if (opts.length === 0) {
-        lines.push({ qty, name, set: null, cn: null, price: null, missing: true, key: `${name}::missing` });
+        lines.push({ qty, name, set: null, cn: null, price: null, category, missing: true, key: `${name}::missing` });
         unresolved++;
         continue;
       }
       const priorityPool = artTypeFilterPool(opts, artPriority, priorityDisabledCards.has(name));
       if (sel.length === 0 && isBasicLand(name)) {
-        lines.push({ qty, name, set: null, cn: null, price: null, basic: true, key: `${name}::basic` });
+        lines.push({ qty, name, set: null, cn: null, price: null, category, basic: true, key: `${name}::basic` });
       } else if (sel.length === 0) {
         // No pick made — fall back to the cheapest printing for the buy-list
         // outputs (ManaPool / Search / direct links / total), but flag it
@@ -763,13 +828,13 @@ export default function App() {
         const p = cheapestOf(priorityPool);
         const finish = chosenFinish(name, p);
         const price = priceForFinish(p, finish);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, auto: true, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, image: p.image, category, auto: true, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (price || 0) * qty;
       } else if (sel.length === 1) {
         const p = opts.find((o) => o.id === sel[0]);
         const finish = chosenFinish(name, p);
         const price = priceForFinish(p, finish);
-        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+        lines.push({ qty, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, image: p.image, category, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
         total += (price || 0) * qty;
       } else {
         const selectedPrints = sel.map((id) => opts.find((o) => o.id === id)).filter(Boolean);
@@ -780,7 +845,7 @@ export default function App() {
         entries.forEach(({ print: p, qty: count }) => {
           const finish = chosenFinish(name, p);
           const price = priceForFinish(p, finish);
-          lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
+          lines.push({ qty: count, name, set: p.set, setName: p.setName, cn: p.cn, treatment: p.treatment, finish, price, image: p.image, category, tcgplayerId: p.tcgplayerId, risky: isMassEntryRisky(p), key: `${name}::${p.id}` });
           total += (price || 0) * count;
         });
       }
@@ -2151,6 +2216,26 @@ export default function App() {
                 Open ManaPool Mass Entry <ExternalLink size={15} />
               </a>
             )}
+            <button
+              onClick={() => downloadTracker(lines)}
+              className="inter"
+              title="Download a self-contained HTML tracker for buying/collecting this deck — one row per card with Buy / Acquired / Slotted checkboxes. Works offline (card art loads from Scryfall)."
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                background: "transparent",
+                color: TEAL,
+                border: `1px solid ${TEAL}`,
+                borderRadius: 6,
+                padding: "11px 20px",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <Download size={15} /> Download acquisition tracker
+            </button>
             <button
               onClick={reset}
               className="inter"
