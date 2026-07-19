@@ -346,11 +346,13 @@ function cardKingdomUrl(l) {
 // Maps the finished deck's output lines to the shared acquisition-tracker's
 // data slot (see SLOTS.md). One row per (card, chosen printing) — the same
 // granularity buildOutput already produces. Nullable-safe: every field but
-// name/qty may be null and the template degrades. section / category /
-// manapool_url / ck_url / cut are intentionally left out per the integration
-// spec — the template fills its own MP/CK name-based links, defaults section
-// to Maindeck, and shows no category tag. (category rides on each line now, so
-// wiring it in is a one-line change if we later want the tracker grouped.)
+// name/qty may be null and the template degrades. `category` is filled from an
+// Archidekt-formatted input line when present and left null otherwise — which
+// is the common case (plain "qty name" lists carry none), so most decks send
+// null and the template just shows no tag / groups everything under Maindeck.
+// The `|| null` also collapses any empty-string category to a clean null.
+// section / manapool_url / ck_url / cut stay out per the integration spec —
+// the template fills its own MP/CK name links and defaults section to Maindeck.
 function buildTrackerData(lines) {
   return {
     deck_name: null,
@@ -364,6 +366,7 @@ function buildTrackerData(lines) {
       tcg_url: l.tcgplayerId ? `https://www.tcgplayer.com/product/${l.tcgplayerId}` : null,
       set: l.set || null,
       cn: l.cn || null,
+      category: l.category || null,
     })),
   };
 }
